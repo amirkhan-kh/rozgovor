@@ -1,0 +1,91 @@
+# ───── Dependencies ─────
+node_modules/
+.pnp
+.pnp.js
+
+# ───── Build output ─────
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# ───── Cache ─────
+.cache/
+.vite/
+.parcel-cache/
+.turbo/
+.eslintcache
+
+# ───── Env / Secrets ─────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# GCP / Service account keys (root va nested)
+big-quanta-*.json
+**/credentials/
+**/*-service-account*.json
+**/*-firebase-adminsdk*.json
+
+# ───── Logs ─────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ───── Backend uploads / media ─────
+backend/uploads/
+backend/public/videos/
+uploads/
+audio/
+*.m4a
+*.mp3
+*.ogg
+*.wav
+*.mp4
+*.mov
+*.webm
+
+# ───── DB backups / dumps ─────
+backups/
+*.dump
+*.sql.gz
+*.bak
+prisma/*.db
+prisma/*.db-journal
+
+# ───── Test / temp ─────
+tmp/
+temp/
+coverage/
+.nyc_output/
+transcription_*.txt
+
+# ───── Generated docs / artifacts ─────
+*.pdf
+image*.png
+screenshot*.png
+Screenshot*.png
+
+# ───── IDE / Editor ─────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.history/
+
+# ───── OS ─────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ───── Claude / agents ─────
+.claude/scheduled_tasks.lock
+.claude/cache/
+.codex

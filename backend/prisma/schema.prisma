@@ -1,0 +1,1441 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id                        String                 @id @default(cuid())
+  name                      String
+  username                  String                 @unique(map: "Company_email_key")
+  password                  String
+  plan                      String                 @default("start")
+  telegramId                String?
+  telegramEnabled           Boolean                @default(false)
+  sendEachAnalysis          Boolean                @default(false)
+  dailySummaryEnabled       Boolean                @default(true)
+  createdAt                 DateTime               @default(now())
+  isActive                  Boolean                @default(true)
+  managerLimit              Int                    @default(20)
+  totalLimitHours           Int                    @default(500)
+  audioLimitPerManager      Int?                   @default(100)
+  amocrm                    AmoCredential?
+  audioFiles                AudioFile[]
+  criteria                  CriteriaCategory[]
+  managers                  Manager[]
+  Summary                   Summary[]
+  salesPlans                SalesPlan[]
+  talkTarget                ManagerTalkTarget?
+  chatSessions              ChatSession[]
+  pipelineMappings          PipelineStageMapping[]
+  excludedPipelines         String[]               @default([])
+  // AmoCRM'dagi "Дата платежа" (yoki o'xshash) custom field ID.
+  // Agar set bo'lsa, sotuv sanasi shu field'dan olinadi (closed_at o'rniga).
+  // Vision School: 1630853 — "Дата платежа"
+  salePaymentFieldId        Int?
+  // Kompaniya kurslari haqida AI uchun Markdown ma'lumot.
+  // Narx, bonuslar, modullar, qoidalar — Analysis promptga kontekst sifatida uzatiladi.
+  // Menejer mijozga to'g'ri kurs ma'lumoti berayotganini tekshirish uchun.
+  courseInfo                String?                @db.Text
+  topPerformerPlaybook      Json? // Auto-generated from top performer's successful calls
+  topPerformerUpdatedAt     DateTime? // When playbook was last refreshed
+  objectionLibrary          Json? // B2-4 — auto-built from all company calls
+  objectionLibraryUpdatedAt DateTime? // When library was last refreshed
+  smartTrackers             Json? // B3-5 — manager-defined custom trackers
+  examSessions              ExamSession[]
+  examScenarios             ExamScenario[]
+  featurePermissions        FeaturePermission[]
+  salespersonStats          SalespersonStats[]
+  salesLeads                SalesLead[]
+  leads                     Lead[]
+  clients                   Client[]
+  scenarios                 Scenario[]
+  lessons                   Lesson[]
+  lessonModules             LessonModule[]
+  courses                   Course[]
+  custdevs                  Custdev[]
+  departments               Department[]
+  activities                Activity[]
+  // Sotuv plan rejimi: "count" (sotuv soni) yoki "amount" (UZS summa)
+  // Reyting > Sotuv jadvalida Summa ustuni ko'rinishi shunga bog'liq.
+  salesPlanMode             String                 @default("count")
+  // Boshliq/ROP tanlagan aktiv bo'limlar. Bo'sh bo'lsa — auto (aktiv menejeri
+  // borlari). Filterlar va analitika faqat shu bo'limlar ustidan ishlaydi.
+  activeDepartmentIds       String[]               @default([])
+  documents                 CompanyDocument[]
+  audioCosts                AudioCost[]
+  companyTestPool           Json?
+  companyTestPoolUpdatedAt  DateTime?
+  companyTestAttempts       CompanyTestAttempt[]
+  legalCases                LegalCase[]
+  legalKnowledge            LegalKnowledge[]
+  products                  Product[]
+  // Bot kunlik hisobot vaqti (Tashkent TZ, HH:mm)
+  adminReportTime           String                 @default("18:00")
+  adminWorkStart            String                 @default("09:00")
+  adminWorkEnd              String                 @default("18:00")
+  reportIncludeSales        Boolean                @default(true)
+  reportIncludeLeads        Boolean                @default(true)
+  reportIncludeAudit        Boolean                @default(true)
+  reportStyle               String                 @default("detailed") // compact | detailed | emoji
+  announcements             Announcement[]
+}
+
+model Product {
+  id            String            @id @default(cuid())
+  companyId     String
+  name          String
+  bitrixEnumId  String?
+  description   String?           @db.Text
+  knowledgeBase String?           @db.Text
+  isActive      Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  company       Company           @relation(fields: [companyId], references: [id])
+  documents     ProductDocument[]
+  leads         Lead[]
+  salesLeads    SalesLead[]
+  audioFiles    AudioFile[]
+
+  @@unique([companyId, bitrixEnumId])
+  @@unique([companyId, name])
+  @@index([companyId, isActive])
+}
+
+model ProductDocument {
+  id           String   @id @default(cuid())
+  productId    String
+  filename     String
+  fileType     String
+  content      String   @db.Text
+  size         Int      @default(0)
+  summary      String?  @db.Text
+  topics       Json?
+  keyPoints    Json?
+  applications Json?
+  conclusion   String?  @db.Text
+  reportStatus String   @default("pending")
+  createdAt    DateTime @default(now())
+
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model CompanyDocument {
+  id           String   @id @default(cuid())
+  companyId    String
+  filename     String
+  fileType     String // pdf | md | txt | pptx | youtube | video
+  content      String   @db.Text
+  size         Int      @default(0)
+  // AI tomonidan generatsiya qilingan o'qish hisoboti
+  summary      String?  @db.Text // qisqa xulosa
+  topics       Json? // asosiy mavzular
+  keyPoints    Json? // asosiy fikrlar
+  applications Json? // qanday qo'llash (sotuv/biznes amalda)
+  conclusion   String?  @db.Text // yakuniy/uzun xulosa (kitob review uslubida)
+  reportStatus String   @default("pending") // pending | done | error
+  createdAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+}
+
+model SuperAdmin {
+  id        String   @id @default(cuid())
+  name      String
+  username  String   @unique(map: "SuperAdmin_email_key")
+  password  String
+  createdAt DateTime @default(now())
+}
+
+model Manager {
+  id                    String               @id @default(cuid())
+  name                  String
+  email                 String
+  photoUrl              String? // Bitrix PERSONAL_PHOTO (profile rasm)
+  customPhotoUrl        String? // Wave 4 — foydalanuvchi yuklagan rasm (celebration video uchun)
+  companyId             String
+  isActive              Boolean              @default(true)
+  createdAt             DateTime             @default(now())
+  canViewAll            Boolean              @default(false)
+  canViewDashboard      Boolean              @default(true)
+  canViewRating         Boolean              @default(true)
+  examEnabled           Boolean              @default(false)
+  // Davomat (attendance) sahifasi — admin har menejer uchun alohida yoqadi
+  attendanceEnabled     Boolean              @default(false)
+  // Admin tomonidan tayinlangan kutilayotgan imtihon (faqat bitta)
+  pendingExamScenarioId String?
+  pendingExamAge        Int?
+  pendingExamGender     String? // "male" | "female"
+  pendingExamName       String?
+  pendingExamAssignedAt DateTime?
+  // Standart: admin tayinlashda kiritadigan maqsadli o'rtacha ball (1-100).
+  // Manager shu balni topishi uchun pendingExamMaxAttempts marta urinish oladi.
+  // overallScore >= target → pass (pending tozalanadi).
+  // attemptsUsed >= maxAttempts va pass bo'lmasa → fail (pending tozalanadi).
+  pendingExamTargetScore  Int?
+  pendingExamMaxAttempts  Int     @default(5)
+  pendingExamAttemptsUsed Int     @default(0)
+  telegramId            String?
+  password              String?
+  role                  String               @default("sotuvchi")
+  // Reyting KPI — sotuv summasidan menejer oladigan foiz (default 0)
+  kpiPercent            Float                @default(0)
+  audioFiles            AudioFile[]
+  company               Company              @relation(fields: [companyId], references: [id])
+  schedule              ManagerSchedule[]
+  examSessions          ExamSession[]
+  stats                 SalespersonStats?
+  goldenMoments         GoldenMoment[]
+  weeklyStrategies      WeeklyStrategy[]
+  progressHistory       ManagerProgress[]
+  practiceSessions      PracticeSession[]
+  salesLeads            SalesLead[]
+  leads                 Lead[]
+  salesPlans            ManagerSalesPlan[]
+  lessonAssignments     LessonAssignment[]
+  moduleAssignments     ModuleAssignment[]
+  courseAssignments     CourseAssignment[]
+  lessonProgress        LessonProgress[]
+  permissions           Permission[]
+  // Bitrix department (UF_DEPARTMENT[0]) — Pre Sale / Otdel Prodaja
+  departmentId          String?
+  department            Department?          @relation(fields: [departmentId], references: [id])
+  activities            Activity[]
+  videos                ManagerVideo[]
+  companyTestAttempts   CompanyTestAttempt[]
+  // Bot shaxsiy hisobot sozlamalari (HH:mm Tashkent TZ). Bo'sh — companydan oladi
+  dailyReportTime       String?
+  workStart             String?
+  workEnd               String?
+  reportEnabled         Boolean              @default(true)
+  reportStyle           String? // compact | detailed | emoji — null bo'lsa company default
+  announcementReads     AnnouncementRead[]
+  announcementsSent     Announcement[]       @relation("AnnouncementTarget")
+}
+
+// ─── Wave 4: Manager Celebration Videos (VEO 3) ──────────────────────────
+// Har menejer o'z foto'sini yuklaydi → 5 VEO 3 ssenariy generatsiya qilinadi
+// (har biri 8s, 16:9). Keyin menejer har video uchun musiqa biriktirishi va
+// CapCut uslubida trim qilishi mumkin (ffmpeg mix) — finalVideoUrl chiqadi.
+model ManagerVideo {
+  id             String    @id @default(cuid())
+  managerId      String
+  scenarioId     Int // 1..5
+  scenarioName   String // "arms-crossing-in", "walk-in-confetti", ...
+  operationId    String? // Vertex AI operation name
+  videoUrl       String? // Yandex-hosted video URL (STT'dan keyin)
+  thumbnailUrl   String?
+  status         String    @default("pending") // pending | generating | ready | failed
+  errorMessage   String?   @db.Text
+  // Music mix (CapCut-style) — track 1
+  musicUrl       String?
+  musicKey       String?
+  musicStartSec  Float?
+  musicEndSec    Float?
+  musicVolume    Float?    @default(1.0)
+  // Track 2
+  musicUrl2      String?
+  musicKey2      String?
+  musicStartSec2 Float?
+  musicEndSec2   Float?
+  musicVolume2   Float?    @default(1.0)
+  finalVideoUrl  String? // ffmpeg mix'dan keyin
+  finalMixedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  manager Manager @relation(fields: [managerId], references: [id], onDelete: Cascade)
+
+  @@unique([managerId, scenarioId])
+  @@index([managerId])
+  @@index([status])
+}
+
+model AudioFile {
+  id                       String      @id @default(cuid())
+  fileName                 String
+  fileUrl                  String
+  managerId                String?
+  companyId                String
+  phoneNumber              String?
+  duration                 Int?
+  category                 String      @default("sotuv")
+  status                   String      @default("pending")
+  transcription            String?
+  crmLeadId                String?
+  createdAt                DateTime    @default(now())
+  callDate                 DateTime?   @db.Timestamp(6)
+  isSale                   Boolean?    @default(false)
+  saleAmount               Float?      @default(0)
+  saleClosedAt             DateTime?   @db.Timestamp(6)
+  saleResponsibleManagerId String?
+  pipelineName             String?
+  leadCreatedAt            DateTime?   @db.Timestamp(6)
+  firstContactAt           DateTime?   @db.Timestamp(6)
+  leadId                   Int?
+  statusName               String?
+  leadTags                 String?
+  // Bitrix/AmoCRM call direction: "outgoing" | "incoming" | null
+  direction                String?
+  // Lid manbasi (Bitrix Lead.SOURCE_ID) — Instagram, Telegram, va h.k.
+  sourceId                 String?
+  sourceName               String?
+  // Public ulashish — shareToken o'rnatilsa, auth'siz ko'rish mumkin
+  shareToken               String?     @unique
+  sharedAt                 DateTime?
+  productId                String?
+  analysis                 Analysis?
+  company                  Company     @relation(fields: [companyId], references: [id])
+  manager                  Manager?    @relation(fields: [managerId], references: [id])
+  product                  Product?    @relation(fields: [productId], references: [id])
+  audioCosts               AudioCost[]
+
+  @@index([shareToken])
+  @@index([companyId, productId])
+}
+
+model Analysis {
+  id               String   @id @default(cuid())
+  audioFileId      String   @unique
+  summary          String
+  overallScore     Int
+  leadQuality      String
+  leadScore        Int
+  criteria         Json
+  errors           Json
+  winPoints        Json
+  lossPoints       Json
+  objections       Json
+  managerSpeech    Float
+  clientSpeech     Float
+  coachingInsights Json? // speechRatioAlert, surrenderedObjections, openEnding, criticalMoments, dealRiskScore
+  // Sud Agent (B5-1) — qisqa/yetarsiz qo'ng'iroqlarni menejer reytingidan chiqarish
+  judgeSkipped     Boolean  @default(false)
+  judgeReason      String?  @db.Text
+  judgeOverridden  Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  // B2-2 Follow-up Signal (o'ylayman / keyin aytaman detection)
+  requiresFollowup  Boolean   @default(false)
+  followupReason    String? // thinking | family_consultation | boss_consultation | price | timing | other
+  followupPhrase    String?   @db.Text
+  followupDeadline  DateTime? // qachongacha qaytadan qo'ng'iroq qilish kerak
+  followupCompleted Boolean   @default(false) // shu leadga yangi qo'ng'iroq keldi mi
+
+  // B2-9 Promise Tracking
+  promises Json? // [{what, deadline, deadlineDays, timestamp, completed}]
+
+  // B3-4 MEDDIC/BANT Qualification
+  qualification Json? // metric, economicBuyer, decisionCriteria, ... overallQualification
+
+  // B3-10 Respect indicators (mahalliy soft skills)
+  respect Json? // ageAppropriateTone, noPrematureClosing, activeListening, respectScore
+
+  // B2-5 Lead Heat Score
+  leadHeatScore Int? // 0-100
+
+  // B4-1 Call Structure (phases: Salomlashish, Kashfiyot, ...)
+  callStructure Json?
+
+  // B4-1 Questions breakdown (SOPRANO — Situation, Opinion, Problem, Reality, Alternative, Need, Outcome)
+  questionsData Json? @map("questions")
+
+  // B4-1 Close attempts
+  closeAttempts Json?
+
+  // B4-1 Voice of Customer
+  voiceOfCustomer Json?
+
+  // B4-1 Intent signals
+  intentSignals Json?
+
+  // Mijoz profili (AI aniqlaydi har tahlilda — age, gender, interests, fears, region, va h.k.)
+  clientProfile Json?
+
+  audioFile       AudioFile        @relation(fields: [audioFileId], references: [id])
+  cleanedAnalysis CleanedAnalysis?
+
+  @@index([requiresFollowup, followupCompleted])
+  @@index([leadHeatScore])
+}
+
+// ─── Strategist Agent natijasi (Layer 3 — Intelligence) ──────────────────
+// Har menejer uchun haftalik strategik reja. Dushanba ertalab avtomatik
+// yaratiladi. Menejer bir haftalik aniq diqqat joyini va amaliy mashqlarni oladi.
+model WeeklyStrategy {
+  id                String   @id @default(cuid())
+  companyId         String
+  managerId         String
+  manager           Manager  @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  weekOf            DateTime @db.Date // dushanba sanasi
+  focusArea         String // "E'tirozga javob (Looping)"
+  reason            String   @db.Text // nega aynan shu tanlandi
+  weeklyGoals       Json // [{goal, target, measure, technique, example}]
+  practiceExercises Json // [{scenarioId, persona, difficulty}]
+  reviewResult      Json? // juma kuni to'ldiriladi
+  status            String   @default("active") // active | completed | skipped
+  createdAt         DateTime @default(now())
+
+  @@unique([managerId, weekOf])
+  @@index([companyId, weekOf])
+}
+
+// ─── Progress Agent natijasi (Layer 4 — Delivery) ────────────────────────
+// Haftalik snapshot — menejer o'sishi va coaching samaradorligi.
+model ManagerProgress {
+  id                    String   @id @default(cuid())
+  managerId             String
+  manager               Manager  @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  snapshotDate          DateTime @db.Date
+  avgScore              Float
+  conversionRate        Float
+  focusAreaScores       Json // {looping: 68, closing: 55}
+  coachingEffectiveness Float? // 0-100, o'tgan haftadagi strategiyaga nisbatan
+  weeklyGoalsCompleted  Int      @default(0)
+  weeklyGoalsTotal      Int      @default(0)
+  createdAt             DateTime @default(now())
+
+  @@unique([managerId, snapshotDate])
+  @@index([managerId, snapshotDate])
+}
+
+// ─── Pattern Miner Agent natijasi (Layer 2 — Quality) ────────────────────
+// Menejer qo'ng'iroqlaridagi YUTUQLI daqiqalarni topadi.
+// Coach har maslahatda "💪 Zo'r qilgan joylaringiz" bo'limini shu manbadan oladi.
+// Ijobiy motivatsiya 2x samaraliroq bo'ladi (xatolar bilan birga yutuqlar ham ko'rsatiladi).
+model GoldenMoment {
+  id          String   @id @default(cuid())
+  companyId   String
+  managerId   String
+  manager     Manager  @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  audioFileId String
+  timestamp   String // "MM:SS"
+  technique   String // "Value-First Pricing" | "Looping" | "GPS Texnikasi" | ...
+  quote       String   @db.Text // transkriptdan aniq iqtibos
+  whyItWorked String   @db.Text // 1 jumlalik tushuntirish
+  replicable  Boolean  @default(true) // boshqalar ham takrorlay oladimi
+  createdAt   DateTime @default(now())
+
+  @@index([managerId, createdAt])
+  @@index([companyId, createdAt])
+}
+
+// ─── Layer 5: Advanced Intelligence ────────────────────────────────────
+
+// Rival Agent — raqobatchilar haqida ma'lumot
+model Competitor {
+  id          String   @id @default(cuid())
+  companyId   String
+  name        String
+  strengths   Json // ["tez yetkazib berish", ...]
+  weaknesses  Json // ["mentor yo'q", ...]
+  counterArgs Json // ["agar X desa, shunday javob ber"]
+  pricingInfo String?  @db.Text
+  lastUpdated DateTime @default(now())
+
+  @@index([companyId])
+}
+
+// Persona Simulator Agent — mijoz personajlari
+model Persona {
+  id          String   @id @default(cuid())
+  companyId   String
+  name        String // "Band rahbar Jasur"
+  description String   @db.Text
+  traits      Json // {patience: 20, skepticism: 80, knowledge: 60}
+  objections  Json // tipik e'tirozlar
+  goldenKeys  Json // shu personani yumshatuvchi iboralar
+  createdAt   DateTime @default(now())
+
+  @@index([companyId])
+}
+
+// Red-Alert Agent — at-risk bitimlar
+model RedAlert {
+  id           String    @id @default(cuid())
+  companyId    String
+  managerId    String
+  leadId       String? // AmoCRM lead ID
+  audioFileIds String[] // oxirgi qo'ng'iroqlar
+  riskLevel    String // "medium" | "high" | "critical"
+  reason       String    @db.Text
+  suggestion   String    @db.Text
+  acknowledged Boolean   @default(false)
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([managerId, createdAt])
+  @@index([companyId, acknowledged])
+}
+
+// Knowledge-Distiller Agent — har kungi "30 soniyalik saboq"
+model DailyLesson {
+  id         String   @id @default(cuid())
+  companyId  String
+  date       DateTime @db.Date
+  title      String
+  summary    String   @db.Text
+  audioUrl   String? // TTS generated (keyinroq)
+  sourceData Json // qaysi agentlardan olindi
+  createdAt  DateTime @default(now())
+
+  @@unique([companyId, date])
+}
+
+// ─── Trainer Agent natijasi (Layer 4 — Delivery) ───────────────────────
+// Menejer ovoz bilan mashq qiladi — Trainer ssenariy beradi, menejer javob aytadi,
+// Yandex STT matnga o'giradi, Gemini Flash baholaydi, Gemini Pro feedback beradi.
+model PracticeSession {
+  id             String   @id @default(cuid())
+  managerId      String
+  manager        Manager  @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  scenarioId     String // "obj-price-01" | "obj-time-02" | "soprano-need-01" | ...
+  personaId      String? // Persona Agent (Faza 6) keyinroq to'ldiradi
+  scenarioTitle  String
+  scenarioPrompt String   @db.Text // mijoz nima degan
+  userAudioUrl   String? // menejer yuklagan audio
+  userTranscript String   @db.Text // Yandex STT natijasi
+  evaluation     Json // {tone, speed, technique, content, score}
+  feedback       String   @db.Text // Gemini Pro feedback
+  attemptNumber  Int      @default(1)
+  createdAt      DateTime @default(now())
+
+  @@index([managerId, createdAt])
+}
+
+// ─── Feedback Agent natijasi (Layer 4 — Delivery) ──────────────────────
+// Menejer Coach javobiga 👍/👎 bosadi. Noto'g'ri maslahatlar CorrectionDataset
+// sifatida yig'iladi — keyinchalik promptni yaxshilash yoki fine-tune uchun.
+model CoachFeedback {
+  id                String    @id @default(cuid())
+  companyId         String
+  managerId         String?
+  chatSessionId     String? // agar suhbat ichidan bo'lsa
+  messageIndex      Int       @default(0) // javob tartib raqami
+  rating            String // "up" | "down"
+  reason            String?   @db.Text // ixtiyoriy sabab
+  transcriptContext String?   @db.Text // coach javobidagi kontekst
+  coachOutput       String    @db.Text // coach bergan markdown javob
+  reviewed          Boolean   @default(false)
+  reviewResult      String? // "approved" | "rejected" | "in_review"
+  reviewedAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([reviewed])
+  @@index([rating])
+}
+
+// ─── Validator Agent natijasi (Layer 2 — Quality) ────────────────────────
+// Analyzer (Gemini Pro) chiqargan xatolar ba'zan hallucinate bo'ladi.
+// Validator (Gemini Flash) har xato va criticalMoment'ni transkriptga solishtirib
+// confidenceScore (0-100) beradi. 70 dan past bo'lganlari Coach'ga yuborilmaydi.
+model CleanedAnalysis {
+  id              String   @id @default(cuid())
+  analysisId      String   @unique
+  analysis        Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  confidenceScore Int // umumiy tahlil ishonchliligi 0-100
+  cleanedErrors   Json // faqat confidence >= 70 bo'lgan xatolar
+  cleanedMoments  Json // faqat confidence >= 70 bo'lgan critical moments
+  evidenceQuotes  Json // har item uchun transkriptdan aniq iqtibos
+  rejectedItems   Json // Validator rad etgan narsalar (audit + debug uchun)
+  validatorModel  String   @default("gemini-2.5-flash")
+  validatedAt     DateTime @default(now())
+
+  @@index([analysisId])
+}
+
+model AmoCredential {
+  id           String   @id @default(cuid())
+  companyId    String   @unique
+  accessToken  String
+  refreshToken String
+  domain       String
+  expiresAt    DateTime
+  clientId     String   @default("")
+  clientSecret String   @default("")
+  redirectUri  String   @default("")
+  company      Company  @relation(fields: [companyId], references: [id])
+}
+
+model CriteriaCategory {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  companyId   String
+  sortOrder   Int?       @default(0)
+  criteria    Criteria[]
+  company     Company    @relation(fields: [companyId], references: [id])
+}
+
+model Criteria {
+  id          String           @id @default(cuid())
+  name        String
+  description String
+  categoryId  String
+  weight      Int              @default(20)
+  sortOrder   Int?             @default(0)
+  category    CriteriaCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+}
+
+model SalesPlan {
+  id        String   @id @default(cuid())
+  companyId String
+  type      String // "daily" | "weekly" | "monthly"
+  target    Int // sotuv soni maqsadi
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, type])
+}
+
+// Har menejer uchun alohida sotuv plani.
+// type: "daily"|"weekly"|"monthly" — davr (Sotuv tab filteri bilan mos).
+// target: Company.salesPlanMode "count" bo'lsa sotuv soni,
+//         "amount" bo'lsa UZS summa.
+model ManagerSalesPlan {
+  id        String   @id @default(cuid())
+  managerId String
+  type      String
+  target    Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  manager   Manager  @relation(fields: [managerId], references: [id])
+
+  @@unique([managerId, type])
+  @@index([managerId])
+}
+
+// Mijoz profili — telefon raqam bo'yicha kompaniya ichida unikal.
+// Qo'ng'iroq tahlilidan keyin AI aniqlagan ma'lumotlar aggregate bo'ladi.
+// Bitrix'da yosh/jinsi/viloyat ko'pincha to'ldirilmagan — AI transkriptdan topadi.
+model Client {
+  id          String @id @default(cuid())
+  companyId   String
+  phoneNumber String // normalized ("998901234567" formatida)
+
+  // Asosiy ma'lumotlar (AI + Bitrix)
+  name          String?
+  age           Int?
+  gender        String? // "male" | "female"
+  region        String? // "Toshkent", "Samarqand" va h.k.
+  bitrixLeadIds Int[]   @default([]) // Bu mijozga tegishli Bitrix lead ID'lari
+
+  // Psixologik profil (AI dan aggregate)
+  interests        String[] @default([]) // ["CRM", "sotuv avtomatlashtirish"]
+  fears            String[] @default([]) // ["narx qimmat", "natija olmaslik"]
+  topQuestions     Json? // [{q: "...", count: N}]
+  topObjections    Json? // [{obj: "narx", count: N}]
+  decisionTimeDays Int? // o'rtacha qaror qabul qilish vaqti
+
+  // So'ngi CRM holati
+  pipelineId   Int?
+  pipelineName String?
+  sourceId     String?
+  sourceName   String?
+
+  lastCallAt    DateTime?
+  callsAnalyzed Int       @default(0)
+  firstSeenAt   DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, phoneNumber])
+  @@index([companyId, region])
+  @@index([companyId, gender])
+  @@index([companyId, pipelineId])
+  @@index([companyId, sourceId])
+}
+
+model ManagerSchedule {
+  id        String   @id @default(cuid())
+  managerId String
+  date      String // "2026-04-07" format
+  status    Int      @default(0) // 0=ish kuni, 1=dam kuni (sariq), 2=ishlamagan (qizil)
+  note      String?
+  createdAt DateTime @default(now())
+  manager   Manager  @relation(fields: [managerId], references: [id])
+
+  @@unique([managerId, date])
+}
+
+model ManagerTalkTarget {
+  id            String   @id @default(cuid())
+  companyId     String
+  dailyMinutes  Int      @default(180) // 3 soat default
+  workStartHour Int      @default(9) // Ish boshlash soati (09:00)
+  workEndHour   Int      @default(18) // Ish tugash soati (18:00)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  company       Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId])
+}
+
+model PipelineStageMapping {
+  id           String   @id @default(cuid())
+  companyId    String
+  pipelineName String
+  stages       Json     @default("[]") // [{name: "...", type: "first_call" | "repeat" | "other"}]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  company      Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, pipelineName])
+}
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  companyId String
+  title     String   @default("Yangi suhbat")
+  managerId String?
+  messages  Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id])
+}
+
+model Summary {
+  id         String    @id
+  companyId  String
+  type       String
+  periodFrom String
+  periodTo   String
+  status     String    @default("pending")
+  content    String?
+  createdAt  DateTime? @default(now()) @db.Timestamp(6)
+  Company    Company   @relation(fields: [companyId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+// ============================================================
+// AI SALES COACH — Voice Exam Chat
+// ============================================================
+
+model ExamScenario {
+  id           String        @id @default(cuid())
+  companyId    String
+  code         String // "new_client" | "objection" | "hard" | "price" | "cancel"
+  name         String // "Yangi mijoz"
+  description  String
+  systemPrompt String // AI persona — mijoz qanday gapirsin
+  difficulty   String        @default("medium") // "easy" | "medium" | "hard"
+  icon         String        @default("👤")
+  category     String        @default("sotuv") // "sotuv" | "qayta"
+  isActive     Boolean       @default(true)
+  order        Int           @default(0)
+  createdAt    DateTime      @default(now())
+  company      Company       @relation(fields: [companyId], references: [id])
+  sessions     ExamSession[]
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+}
+
+model ExamSession {
+  id            String @id @default(cuid())
+  salespersonId String
+  companyId     String
+  scenarioId    String
+
+  // Suhbat
+  messages Json    @default("[]") // [{role, text, audioUrl, ts, ttsHash?}]
+  audioUrl String? // to'liq GCS yozuvi
+  duration Int     @default(0) // soniyalarda
+
+  // Mijoz personalizatsiya (sessiyani boshlashda tanlanadi)
+  clientAge    Int? // AI mijoz yoshi
+  clientGender String? // "male" | "female"
+  clientName   String? // AI mijoz ismi (sotuv stsenariylari uchun)
+
+  // Baholash (suhbat tugagach)
+  overallScore Int?
+  criteria     Json? // {mezon1: {score, comment}, ...}
+  errors       Json? // [{type, description, bookRef}]
+  winPoints    Json? // [{description, bookRef}]
+  coaching     Json? // [{mistake, advice, bookChapter, bookQuote}]
+  summary      String?
+
+  // Optimizatsiya trekingi
+  ttsCacheHits  Int     @default(0)
+  geminiCacheId String?
+
+  // Avto-imtihon: manager'ning eng so'nggi audit tahlilidan kelib chiqib yaratilgan
+  // {auditAudioId, weakestCriterion: {name,score,comment}, persona: {age,gender,name,interests,fears}}
+  autoExamContext Json?
+
+  status      String    @default("active") // "active" | "completed" | "abandoned"
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  salesperson Manager      @relation(fields: [salespersonId], references: [id])
+  company     Company      @relation(fields: [companyId], references: [id])
+  scenario    ExamScenario @relation(fields: [scenarioId], references: [id])
+
+  @@index([salespersonId, completedAt])
+  @@index([companyId, status])
+  @@index([companyId, scenarioId])
+}
+
+model TtsCache {
+  id         String   @id @default(cuid())
+  textHash   String   @unique // sha256(text + voice)
+  text       String // original matn (debug uchun)
+  voice      String   @default("alena") // yandex voice id
+  gcsPath    String // gs://bucket/tts-cache/{hash}.mp3
+  hitCount   Int      @default(0)
+  bytes      Int      @default(0)
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([textHash])
+}
+
+model FeaturePermission {
+  id        String   @id @default(cuid())
+  companyId String
+  feature   String // "exam_chat" | "leaderboard" | "progress" | "manager_dashboard"
+  role      String // "sotuvchi" | "manager" | "admin"
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, feature, role])
+  @@index([companyId, feature])
+}
+
+model SalespersonStats {
+  id            String @id @default(cuid())
+  salespersonId String @unique
+  companyId     String
+
+  totalExams     Int       @default(0)
+  completedExams Int       @default(0)
+  averageScore   Float     @default(0)
+  bestScore      Int       @default(0)
+  streak         Int       @default(0) // ketma-ket kunlar
+  lastExamAt     DateTime?
+
+  weakCriteria   Json? // [{name, avgScore}]
+  strongCriteria Json?
+  weeklyScores   Json? // [{week: "2026-W14", avg, count}]
+  scenarioStats  Json? // {scenario_code: {count, avg}}
+
+  updatedAt DateTime @updatedAt
+
+  salesperson Manager @relation(fields: [salespersonId], references: [id])
+  company     Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, averageScore])
+}
+
+// ─── Bitrix CRM Leadlari ────────────────────────────────────────────────
+// Lead → (CONVERTED status) → Deal (Сделка). Kval lid = CONVERTED.
+model Lead {
+  id                   String   @id @default(cuid())
+  companyId            String
+  bitrixLeadId         Int // Bitrix lead ID
+  title                String?
+  clientPhone          String? // Bitrix lead PHONE[0].VALUE (raw, e.g. "+998901234567")
+  statusId             String? // NEW, IN_PROCESS, CONVERTED, JUNK, ...
+  statusName           String?
+  sourceId             String?
+  opportunity          Float    @default(0)
+  responsibleManagerId String?
+  bitrixUserId         String? // Xom Bitrix user id
+  dateCreate           DateTime
+  isConverted          Boolean  @default(false) // STATUS_ID === 'CONVERTED'
+  rejectReasonId       String? // Bitrix enumeration ID (UF_CRM_1755759759770)
+  rejectReasonName     String? // "Telefonni ko'tarmadi", "DUBL", "Xato raqam" va hk
+  productId            String?
+  syncedAt             DateTime @default(now()) @updatedAt
+
+  company Company  @relation(fields: [companyId], references: [id])
+  manager Manager? @relation(fields: [responsibleManagerId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@unique([companyId, bitrixLeadId])
+  @@index([companyId, dateCreate])
+  @@index([companyId, isConverted, dateCreate])
+  @@index([companyId, responsibleManagerId])
+  @@index([companyId, statusId, rejectReasonName])
+  @@index([companyId, productId])
+}
+
+// ─── Sotuv tahlili uchun AmoCRM leadlari (audio fayldan mustaqil) ───────────
+// Sotuv sahifasi uchun DB source: har unikal AmoCRM lid alohida qator.
+model SalesLead {
+  id                   String    @id @default(cuid())
+  companyId            String
+  leadId               Int // AmoCRM lid raqami
+  pipelineId           Int?
+  pipelineName         String?
+  statusId             Int?
+  statusName           String?
+  semanticId           String? // Bitrix STAGE_SEMANTIC_ID: S=won, F=failed/rad, P=jarayonda
+  price                Float     @default(0)
+  responsibleManagerId String? // Internal manager.id (AmoCRM responsible_user_id orqali mapped)
+  amocrmUserId         String? // Xom AmoCRM responsible_user_id
+  leadCreatedAt        DateTime // AmoCRM created_at
+  closedAt             DateTime? // AmoCRM closed_at — status 142 ga o'tgan vaqt
+  isSale               Boolean   @default(false)
+  // Bitrix stage NAME "Qisman to'lov" (case-insensitive) yoki "Частичная оплата" bilan moslashuvchi
+  isPartialPayment     Boolean   @default(false)
+  // Bitrix deal "Yopilish sababi" — UF_CRM_1777802548185 enumeration
+  // (failed/Сделка провалена deallar uchun: "Xato raqam", "Dubl", ...)
+  closeReasonId        String?
+  closeReasonName      String?
+  // Bitrix custom field UF_CRM_1761119000060 — "Kelishilgan to'lov sanasi"
+  agreedPaymentDate    DateTime?
+  // AmoCRM "Дата платежа" custom field — sotuv hisoblash sanasi
+  paymentDate          DateTime?
+  // AmoCRM lead tag'lari (comma-separated) — manba/source filter uchun
+  leadTags             String?
+  contactPhone         String?
+  contactName          String?
+  originalLeadId       Int? // Bitrix LEAD_ID — deal qaysi liddan yaratilgan (Lead.bitrixLeadId ga mos)
+  productId            String?
+  syncedAt             DateTime  @default(now()) @updatedAt
+
+  company Company  @relation(fields: [companyId], references: [id])
+  manager Manager? @relation(fields: [responsibleManagerId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@unique([companyId, leadId])
+  @@index([companyId, leadCreatedAt])
+  @@index([companyId, isSale, closedAt])
+  @@index([companyId, responsibleManagerId])
+  @@index([companyId, originalLeadId])
+  @@index([companyId, isPartialPayment])
+  @@index([companyId, agreedPaymentDate])
+  @@index([companyId, semanticId, closeReasonName])
+  @@index([companyId, productId])
+}
+
+model Scenario {
+  id          String   @id @default(cuid())
+  companyId   String
+  category    String // "presale" | "qayta" | "sotuv" | "aftersale"
+  title       String
+  // sections: [{id, title, managerScript, branches:[{clientResponse, managerReply}], note?}]
+  sections    Json
+  generatedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isEdited    Boolean  @default(false)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, category])
+  @@index([companyId])
+}
+
+// ─── Darslik tizimi ─────────────────────────────────────────────
+// Admin/Boss/ROP kurs yaratadi → ichida modullar → modulda darslar → manager o'tadi
+// (video → test → AI suhbat). Ketma-ket qulflanadi (oldingisini bitirmasdan keyingisi).
+// 3-qatlamli hierarchy: Course → LessonModule → Lesson.
+
+// Kurs — eng yuqori qatlam. Bir nechta modullarni o'zida birlashtiradi.
+// Masalan: "Pro Sotuvchi" kursi = 10 ta modul = 100+ dars.
+model Course {
+  id          String             @id @default(cuid())
+  companyId   String
+  title       String
+  description String?            @db.Text
+  sortOrder   Int                @default(0)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  modules     LessonModule[]
+  assignments CourseAssignment[]
+  company     Company            @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+}
+
+// Manager'ga butun kursni biriktirish — yangi semantika.
+// Kurs biriktirilgan manager ichidagi BARCHA modullar va darslarga avtomatik
+// kirish huquqiga ega bo'ladi. ModuleAssignment eski ma'lumot uchun qoladi
+// (backward compat), lekin yangi UI flow faqat CourseAssignment bilan ishlaydi.
+model CourseAssignment {
+  id           String    @id @default(cuid())
+  courseId     String
+  managerId    String
+  assignedById String?
+  assignedAt   DateTime  @default(now())
+  dueDate      DateTime?
+
+  course  Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  manager Manager @relation(fields: [managerId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, managerId])
+  @@index([managerId])
+}
+
+// Modul — darslarning o'rta qatlami. Kurs ichida yashaydi.
+// courseId nullable — eski modullar orphan qoladi (backward compat).
+// Manager'ga modul to'liq biriktiriladi, modul ichidagi darslar avtomatik ochiladi.
+model LessonModule {
+  id          String   @id @default(cuid())
+  companyId   String
+  courseId    String?
+  title       String
+  description String?  @db.Text
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company            @relation(fields: [companyId], references: [id])
+  course      Course?            @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  lessons     Lesson[]
+  assignments ModuleAssignment[]
+
+  @@index([companyId, sortOrder])
+  @@index([courseId, sortOrder])
+}
+
+// Manager'ga butun modul biriktirish (darslar avtomatik ochiladi).
+// Eski LessonAssignment ichki (per-dars) biriktirish uchun saqlanadi
+// (back-compat — mavjud progress/unlock logic ishlayveradi).
+model ModuleAssignment {
+  id           String    @id @default(cuid())
+  moduleId     String
+  managerId    String
+  assignedById String
+  assignedAt   DateTime  @default(now())
+  dueDate      DateTime?
+
+  module  LessonModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  manager Manager      @relation(fields: [managerId], references: [id])
+
+  @@unique([moduleId, managerId])
+  @@index([managerId])
+  @@index([moduleId])
+}
+
+model Lesson {
+  id                String   @id @default(cuid())
+  companyId         String
+  moduleId          String? // Qaysi modulga tegishli (null = modulsiz eski darsliklar)
+  title             String
+  description       String?  @db.Text
+  videoUrl          String // lokal path yoki GCS URL
+  videoDurationSec  Int      @default(0)
+  videoSizeBytes    BigInt   @default(0)
+  transcription     String?  @db.Text // Yandex STT plain text
+  transcriptionJson Json? // word-level timestamps
+  // testQuestions: [{q, options:[4], correctIdx, explanation, topicTimestamp?}]
+  testQuestions     Json?
+  testPassScore     Int      @default(85) // pass foizi (default 85%)
+  aiSystemPrompt    String?  @db.Text // Gemini suhbat uchun sistema prompti
+  aiKeyTopics       Json? // ["narx aytish", "e'tirozga javob"]
+  status            String   @default("processing") // processing | ready | failed
+  processingError   String?  @db.Text
+  sttOperationId    String? // Yandex deferred STT operation id — PHASE 1 bergan, PHASE 2 (batch cron) poll qiladi
+  sttAudioKey       String? // Yandex Object Storage key (OGG OPUS) — PHASE 1 saqlaydi, PHASE 2 tozalaydi
+  sortOrder         Int      @default(0) // Duolingo map ketma-ketligi
+  createdById       String? // Manager.id (yaratgan admin/boss/rop)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company     Company            @relation(fields: [companyId], references: [id])
+  module      LessonModule?      @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  assignments LessonAssignment[]
+  progress    LessonProgress[]
+
+  @@index([companyId, sortOrder])
+  @@index([companyId, status])
+  @@index([moduleId, sortOrder])
+}
+
+model LessonAssignment {
+  id           String    @id @default(cuid())
+  lessonId     String
+  managerId    String
+  assignedById String // Manager.id (kim biriktirdi)
+  assignedAt   DateTime  @default(now())
+  dueDate      DateTime?
+
+  lesson  Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  manager Manager @relation(fields: [managerId], references: [id])
+
+  @@unique([lessonId, managerId])
+  @@index([managerId])
+}
+
+model LessonProgress {
+  id        String @id @default(cuid())
+  lessonId  String
+  managerId String
+
+  // Video bosqichi
+  videoWatchedSec  Int       @default(0)
+  videoMaxSec      Int       @default(0) // anti-skip monotonic
+  videoCompleted   Boolean   @default(false)
+  videoCompletedAt DateTime?
+
+  // Test bosqichi
+  testAttempts  Json      @default("[]") // [{startedAt, orderIdxs, optionsOrder, answers, score, finishedAt}]
+  testBestScore Float?
+  testPassed    Boolean   @default(false)
+  testPassedAt  DateTime?
+
+  // AI suhbat bosqichi
+  aiMessages    Json      @default("[]") // [{role: "assistant"|"user", text, ts}]
+  aiStatus      String    @default("not_started") // not_started | in_progress | completed
+  aiScore       Float?
+  aiFeedback    String?   @db.Text
+  aiStrengths   Json?
+  aiWeaknesses  Json?
+  aiCompletedAt DateTime?
+
+  // Yakuniy
+  finalScore  Float?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  lesson  Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  manager Manager @relation(fields: [managerId], references: [id])
+
+  @@unique([lessonId, managerId])
+  @@index([managerId, completedAt])
+}
+
+// ─── Rollar va Ruhsatlar (MVP — super admin panel) ─────────────────────
+// Role defaults — predefined bundles. Manager.role stringda saqlanadi
+// (orqa muvofiqlik uchun). Yangi rollar: rop | manager | boss.
+// Eski "sotuvchi" qiymati "manager" ga teng deb hisoblanadi.
+enum RoleDefault {
+  ROP
+  MANAGER
+  BOSS
+}
+
+// Har menejer uchun maxsus ruxsatlar — rol default'lari ustida
+// ishlatiladigan override. Rol defaultlari kodda aniqlangan, bu jadvalga
+// faqat farqlar yoziladi.
+model Permission {
+  id        String   @id @default(cuid())
+  managerId String // the user
+  pageKey   String // e.g., "sales", "audit", "clients", "custdev", "rating", "managers", "lessons"
+  actionKey String? // e.g., "view", "edit_plan", "upload_audio", "delete" — null means page-level view
+  allowed   Boolean
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  manager Manager @relation(fields: [managerId], references: [id], onDelete: Cascade)
+
+  @@unique([managerId, pageKey, actionKey])
+  @@index([managerId])
+}
+
+// ─── Customer Development (Custdev) ──────────────────────────────────────
+// Company create Custdev projects, define questions, upload customer interview
+// audios. AI transcribes audio, extracts per-question answers, produces
+// per-interview summary and aggregates cross-interview summary.
+model Custdev {
+  id          String   @id @default(cuid())
+  companyId   String
+  title       String
+  description String?  @db.Text
+  aiSummary   String?  @db.Text // cross-interview summary
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company    Company            @relation(fields: [companyId], references: [id])
+  questions  CustdevQuestion[]
+  interviews CustdevInterview[]
+
+  @@index([companyId])
+}
+
+model CustdevQuestion {
+  id        String  @id @default(cuid())
+  custdevId String
+  text      String  @db.Text
+  section   String? // Presale, Sale, After sales — optional grouping
+  sortOrder Int     @default(0)
+
+  custdev Custdev         @relation(fields: [custdevId], references: [id], onDelete: Cascade)
+  answers CustdevAnswer[]
+
+  @@index([custdevId])
+}
+
+model CustdevInterview {
+  id            String   @id @default(cuid())
+  custdevId     String
+  audioUrl      String
+  audioKey      String?
+  transcription String?  @db.Text
+  durationSec   Int?
+  status        String   @default("pending") // pending | processing | completed | failed
+  aiSummary     String?  @db.Text
+  errorMessage  String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  custdev Custdev         @relation(fields: [custdevId], references: [id], onDelete: Cascade)
+  answers CustdevAnswer[]
+
+  @@index([custdevId])
+}
+
+model CustdevAnswer {
+  id          String @id @default(cuid())
+  questionId  String
+  interviewId String
+  answer      String @db.Text
+  timestamp   Int? // soniyalarda — audio qayerida javob boshlangan
+
+  question  CustdevQuestion  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  interview CustdevInterview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, interviewId])
+  @@index([interviewId])
+}
+
+// ─── Bitrix Bo'limlar (Department) ─────────────────────────────────────
+// department.get metodidan sinxronlanadi. Faqat "Pre Sale" va "Otdel Prodaja"
+// (yoki "Отдел продаж") bilan ishlaymiz — qolganlari olinadi, lekin UI filtrlab chiqaradi.
+model Department {
+  id        String   @id // Bitrix department ID (string sifatida)
+  companyId String
+  name      String
+  parentId  String?
+  isActive  Boolean  @default(true)
+  syncedAt  DateTime @default(now()) @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  managers Manager[]
+
+  @@index([companyId])
+  @@index([parentId])
+}
+
+// ─── Bitrix Activity / Zadacha ─────────────────────────────────────────
+// crm.activity.list — qo'ng'iroq, topshiriq, uchrashuv (lid/deal bilan bog'liq).
+// OWNER_TYPE_ID: 1 = LEAD, 2 = DEAL, 3 = CONTACT, 4 = COMPANY
+model Activity {
+  id            String    @id @default(cuid())
+  companyId     String
+  bitrixId      String    @unique // Bitrix ACTIVITY.ID
+  ownerType     Int? // OWNER_TYPE_ID
+  ownerId       String? // OWNER_ID — deal yoki lead id
+  leadId        Int? // OWNER_ID if ownerType=1
+  dealId        Int? // OWNER_ID if ownerType=2
+  typeId        Int? // TYPE_ID: 1=call, 2=meeting, 3=task, 4=email
+  subject       String?   @db.Text
+  direction     Int? // 1=incoming, 2=outgoing
+  priority      Int?
+  responsibleId String? // Bitrix user id (RESPONSIBLE_ID)
+  managerId     String? // Local Manager.id (mapped)
+  deadline      DateTime?
+  startTime     DateTime?
+  endTime       DateTime?
+  completed     Boolean   @default(false)
+  status        Int? // STATUS kod
+  createdBitrix DateTime? // CREATED
+  updatedBitrix DateTime? // LAST_UPDATED
+  syncedAt      DateTime  @default(now()) @updatedAt
+
+  company Company  @relation(fields: [companyId], references: [id])
+  manager Manager? @relation(fields: [managerId], references: [id])
+
+  @@index([companyId, completed])
+  @@index([companyId, deadline])
+  @@index([companyId, managerId])
+  @@index([companyId, dealId])
+  @@index([companyId, leadId])
+}
+
+model LegalCase {
+  id           String   @id @default(cuid())
+  companyId    String
+  title        String
+  status       String   @default("open")
+  clientName   String?
+  clientPhone  String?
+  leadId       String?
+  authority    String?
+  letterDraft  String?  @db.Text
+  letterPdfUrl String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  messages    LegalMessage[]
+  attachments LegalAttachment[]
+  evidence    LegalEvidence[]
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+}
+
+model LegalMessage {
+  id         String   @id @default(cuid())
+  caseId     String
+  role       String
+  content    String   @db.Text
+  toolName   String?
+  toolArgs   Json?
+  toolResult Json?
+  tokensIn   Int?
+  tokensOut  Int?
+  model      String?
+  createdAt  DateTime @default(now())
+
+  case LegalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+}
+
+model LegalAttachment {
+  id            String   @id @default(cuid())
+  caseId        String
+  filename      String
+  mimeType      String
+  fileUrl       String
+  size          Int
+  extractedText String?  @db.Text
+  kind          String?
+  createdAt     DateTime @default(now())
+
+  case LegalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+}
+
+model LegalEvidence {
+  id        String   @id @default(cuid())
+  caseId    String
+  type      String
+  source    String
+  summary   String   @db.Text
+  rawData   Json?
+  createdAt DateTime @default(now())
+
+  case LegalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+}
+
+model LegalKnowledge {
+  id        String   @id @default(cuid())
+  companyId String
+  title     String
+  category  String
+  fileUrl   String?
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, category])
+}
+
+model AudioCost {
+  id          String    @id @default(cuid())
+  audioFileId String
+  audioFile   AudioFile @relation(fields: [audioFileId], references: [id], onDelete: Cascade)
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
+
+  // STT (Yandex)
+  sttProvider    String? // "yandex"
+  sttMode        String? // "batch" (deferred) | "online" (streaming v3)
+  sttDurationSec Int?
+  sttCostUsd     Float?
+
+  // Diarization (Gemini Flash)
+  flashMode         String? // "batch" | "online"
+  flashInputTokens  Int?
+  flashOutputTokens Int?
+  flashAudioSec     Int? // audio input bo'lsa, taxminiy
+  flashCostUsd      Float?
+
+  // Analysis (Gemini Pro)
+  proMode         String? // "batch" | "online"
+  proInputTokens  Int?
+  proOutputTokens Int?
+  proCostUsd      Float?
+
+  totalCostUsd Float    @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([audioFileId])
+  @@index([companyId, createdAt])
+}
+
+model CompanyTestAttempt {
+  id           String    @id @default(cuid())
+  managerId    String
+  companyId    String
+  questions    Json
+  orderIdxs    Json
+  optionsOrder Json
+  answers      Json?
+  score        Int?
+  passed       Boolean   @default(false)
+  perQuestion  Json?
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  manager Manager @relation(fields: [managerId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([managerId, completedAt])
+  @@index([companyId, completedAt])
+}
+
+// ─── Broadcast / Motivational announcements ────────────────────────────
+// Adminstrator yoki bot AI tomonidan menejer(lar)ga yuborilgan habar.
+// Site'da katta ekran modal sifatida ko'rinadi, parallel telegram'ga yetkaziladi.
+model Announcement {
+  id             String   @id @default(cuid())
+  companyId      String
+  // motivation | encouragement | celebration | announcement
+  kind           String   @default("announcement")
+  // Manager.id | departmentId | "ALL"
+  targetType     String // "manager" | "department" | "all"
+  targetId       String? // manager.id yoki departmentId
+  title          String?
+  body           String   @db.Text // Markdown (Telegram MarkdownV2 subset)
+  // Aniq menejer ro'yxati (department/all uchun ham resolved expanded list)
+  recipientIds   String[] @default([])
+  isAI           Boolean  @default(false)
+  createdById    String? // company yoki manager id (sender)
+  createdByRole  String? // "company" | "manager" | "rop" | "ai"
+  sentToTelegram Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  company       Company            @relation(fields: [companyId], references: [id])
+  // targetManager relation (faqat targetType=manager bo'lganda)
+  targetManager Manager?           @relation("AnnouncementTarget", fields: [targetId], references: [id])
+  reads         AnnouncementRead[]
+
+  @@index([companyId, createdAt])
+}
+
+model AnnouncementRead {
+  id             String    @id @default(cuid())
+  announcementId String
+  managerId      String
+  readAt         DateTime?
+  shownAt        DateTime?
+  createdAt      DateTime  @default(now())
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  manager      Manager      @relation(fields: [managerId], references: [id])
+
+  @@unique([announcementId, managerId])
+  @@index([managerId, readAt])
+}

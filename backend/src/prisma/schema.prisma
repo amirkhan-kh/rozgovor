@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id                  String             @id @default(cuid())
+  name                String
+  username            String             @unique(map: "Company_email_key")
+  password            String
+  plan                String             @default("start")
+  totalLimitHours     Int                @default(500)
+  telegramId          String?
+  telegramEnabled     Boolean            @default(false)
+  sendEachAnalysis    Boolean            @default(false)
+  dailySummaryEnabled Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  isActive            Boolean            @default(true)
+  managerLimit        Int                @default(20)
+  amocrm              AmoCredential?
+  audioFiles          AudioFile[]
+  criteria            CriteriaCategory[]
+  managers            Manager[]
+}
+
+model SuperAdmin {
+  id        String   @id @default(cuid())
+  name      String
+  username  String   @unique(map: "SuperAdmin_email_key")
+  password  String
+  createdAt DateTime @default(now())
+}
+
+model Manager {
+  id               String      @id @default(cuid())
+  name             String
+  email            String
+  companyId        String
+  isActive         Boolean     @default(true)
+  createdAt        DateTime    @default(now())
+  canViewAll       Boolean     @default(false)
+  canViewDashboard Boolean     @default(true)
+  canViewRating    Boolean     @default(true)
+  password         String?
+  role             String      @default("sotuvchi")
+  audioFiles       AudioFile[]
+  company          Company     @relation(fields: [companyId], references: [id])
+}
+
+model AudioFile {
+  id            String    @id @default(cuid())
+  fileName      String
+  fileUrl       String
+  managerId     String?
+  companyId     String
+  phoneNumber   String?
+  duration      Int?
+  category      String    @default("sotuv")
+  status        String    @default("pending")
+  transcription String?
+  crmLeadId     String?
+  createdAt     DateTime  @default(now())
+  analysis      Analysis?
+  company       Company   @relation(fields: [companyId], references: [id])
+  manager       Manager?  @relation(fields: [managerId], references: [id])
+}
+
+model Analysis {
+  id            String    @id @default(cuid())
+  audioFileId   String    @unique
+  summary       String
+  overallScore  Int
+  leadQuality   String
+  leadScore     Int
+  criteria      Json
+  errors        Json
+  winPoints     Json
+  lossPoints    Json
+  objections    Json
+  managerSpeech Float
+  clientSpeech  Float
+  createdAt     DateTime  @default(now())
+  audioFile     AudioFile @relation(fields: [audioFileId], references: [id])
+}
+
+model AmoCredential {
+  id           String   @id @default(cuid())
+  companyId    String   @unique
+  company      Company  @relation(fields: [companyId], references: [id])
+  domain       String
+  clientId     String
+  clientSecret String
+  redirectUri  String   @default("")
+  accessToken  String   @db.Text
+  refreshToken String   @db.Text
+  expiresAt    DateTime
+}
+
+model CriteriaCategory {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  companyId   String
+  criteria    Criteria[]
+  company     Company    @relation(fields: [companyId], references: [id])
+}
+
+model Criteria {
+  id          String           @id @default(cuid())
+  name        String
+  description String
+  categoryId  String
+  weight      Int              @default(20)
+  category    CriteriaCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+}
