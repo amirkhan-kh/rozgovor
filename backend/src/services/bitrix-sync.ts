@@ -360,12 +360,16 @@ export async function upsertDealById(
   companyId: string,
   dealId: number
 ): Promise<{ isSale: boolean; wasSale: boolean; managerId: string | null } | null> {
-  const [stageMap, catMap, rates, reasons, resp] = await Promise.all([
+  const [stageMap, catMap, rates, reasons, resp, company] = await Promise.all([
     getStageMap(),
     getCategoryMap(),
     getCurrencyMap(),
     getDealReasonMap(),
     bitrixCall("crm.deal.get", { id: dealId }),
+    prisma.company.findUnique({
+      where: { id: companyId },
+      select: { excludedPipelines: true },
+    }),
   ]);
   const d = resp.result as Record<string, unknown> | undefined;
   if (!d || !d.ID) return null;
@@ -373,8 +377,13 @@ export async function upsertDealById(
   const leadIdNum = parseInt(String(d.ID), 10);
   if (Number.isNaN(leadIdNum)) return null;
   const categoryId = parseInt(String(d.CATEGORY_ID), 10);
+  const pipelineName = catMap.get(categoryId) || `Pipeline ${categoryId}`;
   const semantic = (d.STAGE_SEMANTIC_ID as string) || null;
-  const isSale = semantic === "S";
+  // Excluded pipeline (HR/Naym kabi) — NAME yoki ID-string bilan match → sotuv emas.
+  const excluded = new Set(company?.excludedPipelines || []);
+  const isExcluded =
+    excluded.has(String(categoryId)) || excluded.has(pipelineName);
+  const isSale = semantic === "S" && !isExcluded;
   const stageName = stageMap.get(String(d.STAGE_ID)) || String(d.STAGE_ID);
   const bitrixUserId = d.ASSIGNED_BY_ID ? String(d.ASSIGNED_BY_ID) : null;
   const managerId = await ensureManager(companyId, bitrixUserId);
@@ -394,7 +403,7 @@ export async function upsertDealById(
       companyId,
       leadId: leadIdNum,
       pipelineId: categoryId,
-      pipelineName: catMap.get(categoryId) || `Pipeline ${categoryId}`,
+      pipelineName,
       statusName: stageName,
       semanticId: semantic,
       price: oppToUzs(d.OPPORTUNITY, d.CURRENCY_ID, rates),
@@ -410,7 +419,7 @@ export async function upsertDealById(
     },
     update: {
       pipelineId: categoryId,
-      pipelineName: catMap.get(categoryId) || `Pipeline ${categoryId}`,
+      pipelineName,
       statusName: stageName,
       semanticId: semantic,
       price: oppToUzs(d.OPPORTUNITY, d.CURRENCY_ID, rates),

@@ -23,7 +23,6 @@ import {
   ChevronRight,
   MessageCircle,
   FileText,
-  Package,
 } from "lucide-react";
 import { useFeaturePermissions } from "../../hooks/useFeaturePermissions";
 import { usePermissions } from "../../hooks/usePermissions";
@@ -59,6 +58,7 @@ const SECTION_ORDER: Section[] = ["action", "analytics", "coaching", "settings"]
 const navItems: NavItem[] = [
   // ─── Kundalik ish ─────────────────────────────────────────────────
   { section: "action", to: "/sales", label: "Sotuv", icon: <TrendingUp size={20} />, color: "#22c55e", roles: ["admin", "rop"], pageKey: "sales" },
+  { section: "action", to: "/analytics", label: "Analitika", icon: <BarChart3 size={20} />, color: "#06b6d4", roles: ["admin", "rop"], pageKey: "sales" },
   { section: "action", to: "/audit", label: "Audit", icon: <Headphones size={20} />, color: "#8b5cf6", roles: ["admin", "rop"], pageKey: "audit" },
   { section: "action", to: "/clients", label: "Mijozlar", icon: <CircleUserRound size={20} />, color: "#06b6d4", roles: ["admin", "rop"], pageKey: "clients" },
   { section: "action", to: "/managers", label: "Menejerlar", icon: <Users size={20} />, color: "#10b981", roles: ["admin", "rop"], pageKey: "managers" },

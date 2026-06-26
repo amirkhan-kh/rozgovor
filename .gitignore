@@ -43,6 +43,10 @@ backend/uploads/
 backend/public/videos/
 uploads/
 audio/
+# ⚠️ "audio/" media katalogini ignore qiladi, LEKIN frontend SOURCE kodini emas.
+# Busiz frontend/src/pages/audio/ (audio sahifalar) git'ga tushmay yo'qoladi.
+!frontend/src/pages/audio/
+!frontend/src/components/audio/
 *.m4a
 *.mp3
 *.ogg
@@ -50,6 +54,12 @@ audio/
 *.mp4
 *.mov
 *.webm
+
+# ───── Lokal Postgres cluster + binarlar (venv uslubi, Docker'siz) ─────
+.pgdata/
+**/.pgdata/
+.pgbin/
+**/.pgbin/
 
 # ───── DB backups / dumps ─────
 backups/
@@ -89,3 +99,7 @@ Desktop.ini
 .claude/scheduled_tasks.lock
 .claude/cache/
 .codex
+
+# Lokal reja hujjatlari (maxfiy parollar bor — commit qilinmaydi)
+PLAN.md
+docs/PLAN.md

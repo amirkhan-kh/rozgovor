@@ -72,7 +72,7 @@ export interface ClientsListParams {
 export interface ClientInsightsParams {
   region?: string;
   gender?: string;
-  pipelineId?: number;
+  pipelineId?: string;
   sourceId?: string;
   search?: string;
   period?: string;

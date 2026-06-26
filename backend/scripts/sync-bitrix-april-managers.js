@@ -12,6 +12,7 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 const BITRIX_WEBHOOK =
+  process.env.BITRIX_WEBHOOK_URL ||
   "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 
 const TARGET_USERS = ["64", "976", "1534", "2042", "2140"];

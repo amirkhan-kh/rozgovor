@@ -10,6 +10,7 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 const BITRIX_WEBHOOK =
+  process.env.BITRIX_WEBHOOK_URL ||
   "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 
 async function bitrixCall(method, payload = {}, attempt = 1) {

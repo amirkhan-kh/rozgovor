@@ -115,6 +115,19 @@ export const audioService = {
     return data.data;
   },
 
+  // <audio> elementi header yubora olmaydi → token query param bilan stream.
+  // Backend authMiddleware req.query.token ni qabul qiladi; Yandex'dan range bilan uzatadi.
+  streamUrl(id: string): string {
+    const base = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
+    const token = localStorage.getItem("token") || "";
+    return `${base}/audio/${id}/stream?token=${encodeURIComponent(token)}`;
+  },
+
+  publicStreamUrl(token: string): string {
+    const base = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
+    return `${base}/public/audio/${token}/stream`;
+  },
+
   async analyzeBulk(ids: string[]): Promise<{ message: string; count: number; ids: string[] }> {
     const { data } = await api.post<ApiResponse<{ message: string; count: number; ids: string[] }>>(
       "/audio/analyze-bulk",

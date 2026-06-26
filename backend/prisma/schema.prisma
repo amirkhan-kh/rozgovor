@@ -32,6 +32,11 @@ model Company {
   chatSessions              ChatSession[]
   pipelineMappings          PipelineStageMapping[]
   excludedPipelines         String[]               @default([])
+  // Kval lid / konversiya KPI manbasi:
+  //   "deals" (default) — SalesLead (deal) yakunlangan stagelaridan (ProSales).
+  //   "leads"           — Lead.isConverted (CLAUDE.md modeli, ROZGOVOR kabi
+  //                       sodda pipeline'lar uchun). Konv = sotuv / konvertatsiya lid.
+  leadKpiSource             String                 @default("deals")
   // AmoCRM'dagi "Дата платежа" (yoki o'xshash) custom field ID.
   // Agar set bo'lsa, sotuv sanasi shu field'dan olinadi (closed_at o'rniga).
   // Vision School: 1630853 — "Дата платежа"

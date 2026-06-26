@@ -1,5 +1,5 @@
 const axios = require("axios");
-const BITRIX = "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
+const BITRIX = process.env.BITRIX_WEBHOOK_URL || "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 const USERS = { 64: "Aziza", 976: "Muslima", 1534: "Visola", 2042: "Xusnora", 2140: "Zilolaxon" };
 const MIN_DURATION = 30; // seconds — 30s+ qo'ng'iroqlar
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));

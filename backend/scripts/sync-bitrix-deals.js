@@ -6,12 +6,23 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 const BITRIX_WEBHOOK =
+  process.env.BITRIX_WEBHOOK_URL ||
   "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 
-// Bitrix custom field — "Kelishilgan to'lov sanasi" (type: date).
-// Discovered via scripts/find-kelishilgan-field.js (userfield.get):
-//   UF_CRM_1761119000060 = "Kelishilgan to'lov sanasi"
-const KELISHILGAN_FIELD = "UF_CRM_1761119000060";
+// Bitrix custom field — to'lov/xarid sanasi (type: date/datetime).
+// Instans bo'yicha o'zgaradi → PAYMENT_DATE_FIELD env orqali beriladi.
+//   ProSales:  UF_CRM_1761119000060 = "Kelishilgan to'lov sanasi" (default)
+//   ROZGOVOR:  UF_CRM_687F7EA97DF93 = "Xarid qilingan kuni"
+const KELISHILGAN_FIELD =
+  process.env.PAYMENT_DATE_FIELD || "UF_CRM_1761119000060";
+
+// Excluded pipeline — Company.excludedPipelines'da NAME ("Naym") yoki
+// ID-string ("1") bo'yicha match. Bunday voronka sotuv emas (masalan HR/Naym)
+// → semantic "S" bo'lsa ham isSale=false, sotuv KPI'ni shishirmaydi.
+function isExcludedPipeline(excluded, pipelineId, pipelineName) {
+  if (excluded.size === 0) return false;
+  return excluded.has(String(pipelineId)) || (!!pipelineName && excluded.has(pipelineName));
+}
 
 // Qisman to'lov — stage NAME bilan match. Bitrix ID'lari pipelineda turlicha
 // (C12:UC_KNWAWJ "Qisman tolov1", C38:UC_UBEBWK "Qisman to'lov qildi", ...)
@@ -185,6 +196,10 @@ async function main() {
     process.exit(1);
   }
   console.log(`Company: ${company.name} (${company.id})`);
+  const excludedPipelines = new Set(company.excludedPipelines || []);
+  if (excludedPipelines.size > 0) {
+    console.log(`Excluded pipelines: ${[...excludedPipelines].join(", ")}`);
+  }
 
   const now = new Date();
   const threeMoAgo = new Date(Date.UTC(
@@ -229,7 +244,9 @@ async function main() {
     if (isNaN(leadIdNum)) continue;
 
     const categoryId = parseInt(d.CATEGORY_ID, 10);
-    const isSale = d.STAGE_SEMANTIC_ID === "S";
+    const pipelineName = catMap.get(categoryId) || `Pipeline ${categoryId}`;
+    const excluded = isExcludedPipeline(excludedPipelines, categoryId, pipelineName);
+    const isSale = d.STAGE_SEMANTIC_ID === "S" && !excluded;
     const stageName = stageMap.get(d.STAGE_ID) || d.STAGE_ID;
     const isPartialPayment = isPartialPaymentStageName(stageName);
     const amoUserId = d.ASSIGNED_BY_ID ? String(d.ASSIGNED_BY_ID) : null;
@@ -245,7 +262,7 @@ async function main() {
         companyId: company.id,
         leadId: leadIdNum,
         pipelineId: categoryId,
-        pipelineName: catMap.get(categoryId) || `Pipeline ${categoryId}`,
+        pipelineName,
         statusId: null, // Bitrix STAGE_ID string — statusName'da saqlanadi
         statusName: stageName,
         semanticId: d.STAGE_SEMANTIC_ID || null,
@@ -261,7 +278,7 @@ async function main() {
       },
       update: {
         pipelineId: categoryId,
-        pipelineName: catMap.get(categoryId) || `Pipeline ${categoryId}`,
+        pipelineName,
         statusName: stageName,
         semanticId: d.STAGE_SEMANTIC_ID || null,
         originalLeadId: d.LEAD_ID ? Number(d.LEAD_ID) : null,

@@ -436,7 +436,15 @@ const ManagerLegendRow: React.FC<ManagerLegendProps> = ({
   onHover,
 }) => {
   const medalColor =
-    rank === 1 ? "#f5c242" : rank === 2 ? "#c0c0c0" : rank === 3 ? "#cd7f32" : null;
+    m.salesCount > 0
+      ? rank === 1
+        ? "#f5c242"
+        : rank === 2
+        ? "#c0c0c0"
+        : rank === 3
+        ? "#cd7f32"
+        : null
+      : null;
 
   return (
     <div
@@ -753,7 +761,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
     return `${formatUzDate(range.from)} — ${formatUzDate(range.to)}`;
   };
 
-  // Pie chart uchun: sotuvi bor menejerlar
+  // Pie chart uchun: sotuvi bor menejerlar (sotuv ulushi mantiqan faqat sotuvchilar)
   const pieManagers = (data?.byManager || []).filter((m) => m.salesCount > 0);
   const pieData = pieManagers.map((m, i) => ({
     id: m.managerId,
@@ -764,6 +772,17 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
     color: PIE_COLORS[i % PIE_COLORS.length],
   }));
   const activeIdx = activeId ? pieData.findIndex((d) => d.id === activeId) : -1;
+
+  // Legend/ro'yxat uchun: BARCHA menejer (to'liq statistika bilan).
+  // Saralash: sotuvchilar tepada (sotuv → tushum), keyin lidi ko'plar.
+  const pieColorById = new Map(pieData.map((d) => [d.id, d.color]));
+  const NEUTRAL_DOT = "#6b7280";
+  const legendManagers = [...(data?.byManager || [])].sort(
+    (a, b) =>
+      b.salesCount - a.salesCount ||
+      b.revenue - a.revenue ||
+      b.leadCount - a.leadCount
+  );
 
   return (
     <div className={embedded ? "space-y-5" : "px-4 md:px-6 py-4 space-y-5 max-w-7xl mx-auto"}>
@@ -1561,7 +1580,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
 
         {isLoading ? (
           <Skeleton className="h-80" rounded="xl" />
-        ) : !data || pieData.length === 0 ? (
+        ) : !data || legendManagers.length === 0 ? (
           <Card>
             <div className="py-12 text-center">
               <User
@@ -1570,7 +1589,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
                 style={{ color: "var(--text-secondary)" }}
               />
               <p style={{ color: "var(--text-secondary)" }}>
-                Bu davrda menejerlar yo'q yoki sotuv bo'lmagan
+                Bu davrda menejerlar yo'q
               </p>
             </div>
           </Card>
@@ -1656,21 +1675,18 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
                 </div>
               </div>
 
-              {/* ─── Legend/list ─── */}
+              {/* ─── Legend/list — BARCHA menejer (to'liq statistika) ─── */}
               <div className="space-y-1.5 max-h-[340px] overflow-y-auto pr-1">
-                {pieData.map((d, idx) => {
-                  const m = pieManagers[idx];
-                  return (
-                    <ManagerLegendRow
-                      key={m.managerId}
-                      m={m}
-                      rank={idx + 1}
-                      color={d.color}
-                      isActive={activeId === m.managerId}
-                      onHover={setActiveId}
-                    />
-                  );
-                })}
+                {legendManagers.map((m, idx) => (
+                  <ManagerLegendRow
+                    key={m.managerId}
+                    m={m}
+                    rank={idx + 1}
+                    color={pieColorById.get(m.managerId) || NEUTRAL_DOT}
+                    isActive={activeId === m.managerId}
+                    onHover={setActiveId}
+                  />
+                ))}
               </div>
             </div>
           </Card>

@@ -16,6 +16,7 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 const BITRIX_WEBHOOK =
+  process.env.BITRIX_WEBHOOK_URL ||
   "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 
 const DAYS = Number(process.argv[2] || 3);

@@ -15,6 +15,7 @@ const RoleBasedIndex: React.FC = () => {
 
 // Direct imports — no lazy loading, no double skeleton
 import SalesPage from "../pages/sales/SalesPage";
+import AnalyticsPage from "../pages/analytics/AnalyticsPage";
 import SalesLeadsListPage from "../pages/sales/SalesLeadsListPage";
 import SalesTasksListPage from "../pages/sales/SalesTasksListPage";
 import AuditPage from "../pages/audit/AuditPage";
@@ -134,6 +135,7 @@ const AppRouter: React.FC = () => {
         >
           <Route index element={<RoleBasedIndex />} />
           <Route path="sales" element={<SalesPage />} />
+          <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="sales/leads/:kind" element={<SalesLeadsListPage />} />
           <Route path="sales/tasks/:kind" element={<SalesTasksListPage />} />
           <Route path="audit" element={<AuditPage />} />

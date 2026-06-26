@@ -5,6 +5,7 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
 const BITRIX_WEBHOOK =
+  process.env.BITRIX_WEBHOOK_URL ||
   "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 
 async function bitrixCall(method, payload = {}) {
@@ -18,9 +19,11 @@ async function bitrixCall(method, payload = {}) {
 async function fetchAllUsers() {
   const all = [];
   let start = 0;
-  // user.get default'da UF_DEPARTMENT ni qaytaradi — explicit select kerak emas
+  // user.get default'da UF_DEPARTMENT ni qaytaradi — explicit select kerak emas.
+  // ADMIN_MODE: nofaol/ishdan ketgan userlarni ham qaytaradi (admin webhook kerak),
+  // aks holda eski deal/qo'ng'iroqlardagi userlar orphan bo'lib qoladi.
   while (true) {
-    const resp = await bitrixCall("user.get", { start });
+    const resp = await bitrixCall("user.get", { start, ADMIN_MODE: true });
     const batch = resp.result || [];
     all.push(...batch);
     if (resp.next === undefined || batch.length === 0) break;

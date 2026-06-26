@@ -6,6 +6,7 @@ import axios from "axios";
 import { prisma } from "../utils/prisma";
 
 const BITRIX_WEBHOOK =
+  process.env.BITRIX_WEBHOOK_URL ||
   process.env.BITRIX_WEBHOOK ||
   "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 

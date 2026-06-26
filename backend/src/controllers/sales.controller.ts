@@ -298,7 +298,8 @@ const computeByManagerMap = async (
   pipelineIds: number[] | null = null,
   managerIds: string[] | null = null,
   sourceIds: string[] | null = null,
-  bitrixLeadIdsFromSources: number[] | null = null
+  bitrixLeadIdsFromSources: number[] | null = null,
+  kpiFromLeads = false
 ): Promise<Map<string, ManagerStats>> => {
   const map = new Map<string, ManagerStats>();
   const ensure = (mId: string): ManagerStats => {
@@ -314,105 +315,125 @@ const computeByManagerMap = async (
     return map.get(mId)!;
   };
 
-  // 1) Leadlar (Lead jadvalidan, davrda yaratilgan) — faqat leadCount uchun
+  // 1) Leadlar (Lead jadvalidan) — leadCount (va "leads" modeli'da kval = isConverted)
   const leadWhere: Record<string, unknown> = { companyId };
   if (dateRange) leadWhere.dateCreate = dateRange;
   if (managerIds) leadWhere.responsibleManagerId = { in: managerIds };
   if (sourceIds) leadWhere.sourceId = { in: sourceIds };
   const leads = await prisma.lead.findMany({
     where: leadWhere,
-    select: { responsibleManagerId: true },
+    select: { responsibleManagerId: true, isConverted: true },
   });
   for (const l of leads) {
     const mId = l.responsibleManagerId;
     if (!mId) continue;
     const cur = ensure(mId);
     cur.leadCount += 1;
+    if (kpiFromLeads && l.isConverted) cur.qualifiedLeadCount += 1;
   }
 
-  // 2) Qual lid = bu davrda yopilgan deallar — faqat QUALIFYING_CLOSED_STAGES dagi statusName
-  const closedWhere: Record<string, unknown> = {
-    companyId,
-    semanticId: { in: ["S", "F"] },
-    statusName: { in: QUALIFYING_CLOSED_STAGES },
-  };
-  if (dateRange) closedWhere.closedAt = dateRange;
-  if (pipelineIds) closedWhere.pipelineId = { in: pipelineIds };
-  if (managerIds) closedWhere.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    closedWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
-  }
-  const closedDeals = await prisma.salesLead.findMany({
-    where: closedWhere,
-    select: {
-      responsibleManagerId: true,
-      isSale: true,
-      isPartialPayment: true,
-      price: true,
-    },
-  });
-  for (const d of closedDeals) {
-    const mId = d.responsibleManagerId;
-    if (!mId) continue;
-    const cur = ensure(mId);
-    cur.qualifiedLeadCount += 1;
-    // Sotuv = won (S) YOKI qisman to'lov (stage NAME match)
-    if (d.isSale || d.isPartialPayment) {
+  if (kpiFromLeads) {
+    // "leads" modeli: kval yuqorida (isConverted) sanaldi. Sotuv = SalesLead isSale
+    // (won) — yopilgan stage NAME'iga bog'liq emas (instans-agnostik).
+    const wonW: Record<string, unknown> = { companyId, isSale: true };
+    if (dateRange) wonW.closedAt = dateRange;
+    if (pipelineIds) wonW.pipelineId = { in: pipelineIds };
+    if (managerIds) wonW.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) wonW.originalLeadId = { in: bitrixLeadIdsFromSources };
+    const wonDeals = await prisma.salesLead.findMany({
+      where: wonW,
+      select: { responsibleManagerId: true, price: true },
+    });
+    for (const d of wonDeals) {
+      const mId = d.responsibleManagerId;
+      if (!mId) continue;
+      const cur = ensure(mId);
       cur.salesCount += 1;
       cur.revenue += cleanPrice(d.price);
     }
-  }
+  } else {
+    // "deals" modeli (ProSales) — kval + sotuv yopilgan/ochiq qualifying stagelardan
+    // 2) Qual lid = bu davrda yopilgan deallar — faqat QUALIFYING_CLOSED_STAGES dagi statusName
+    const closedWhere: Record<string, unknown> = {
+      companyId,
+      semanticId: { in: ["S", "F"] },
+      statusName: { in: QUALIFYING_CLOSED_STAGES },
+    };
+    if (dateRange) closedWhere.closedAt = dateRange;
+    if (pipelineIds) closedWhere.pipelineId = { in: pipelineIds };
+    if (managerIds) closedWhere.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      closedWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    const closedDeals = await prisma.salesLead.findMany({
+      where: closedWhere,
+      select: {
+        responsibleManagerId: true,
+        isSale: true,
+        isPartialPayment: true,
+        price: true,
+      },
+    });
+    for (const d of closedDeals) {
+      const mId = d.responsibleManagerId;
+      if (!mId) continue;
+      const cur = ensure(mId);
+      cur.qualifiedLeadCount += 1;
+      // Sotuv = won (S) YOKI qisman to'lov (stage NAME match)
+      if (d.isSale || d.isPartialPayment) {
+        cur.salesCount += 1;
+        cur.revenue += cleanPrice(d.price);
+      }
+    }
 
-  // Qisman to'lov dealari ochiq holatda ham bo'lishi mumkin (semantic P/not closed).
-  // Shularni ham qo'shamiz (davr bo'yicha leadCreatedAt yoki closedAt orqali).
-  const partialWhere: Record<string, unknown> = {
-    companyId,
-    isPartialPayment: true,
-    // Closed dealar yuqoridagi closedDeals'da sanab bo'lingan, bularni dublikatga kiritmaymiz
-    semanticId: { notIn: ["S", "F"] },
-  };
-  if (dateRange) partialWhere.leadCreatedAt = dateRange;
-  if (pipelineIds) partialWhere.pipelineId = { in: pipelineIds };
-  if (managerIds) partialWhere.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    partialWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
-  }
-  const openPartials = await prisma.salesLead.findMany({
-    where: partialWhere,
-    select: { responsibleManagerId: true, price: true },
-  });
-  for (const d of openPartials) {
-    const mId = d.responsibleManagerId;
-    if (!mId) continue;
-    const cur = ensure(mId);
-    cur.qualifiedLeadCount += 1;
-    cur.salesCount += 1;
-    cur.revenue += d.price || 0;
-  }
+    // Qisman to'lov dealari ochiq holatda ham bo'lishi mumkin (semantic P/not closed).
+    const partialWhere: Record<string, unknown> = {
+      companyId,
+      isPartialPayment: true,
+      semanticId: { notIn: ["S", "F"] },
+    };
+    if (dateRange) partialWhere.leadCreatedAt = dateRange;
+    if (pipelineIds) partialWhere.pipelineId = { in: pipelineIds };
+    if (managerIds) partialWhere.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      partialWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    const openPartials = await prisma.salesLead.findMany({
+      where: partialWhere,
+      select: { responsibleManagerId: true, price: true },
+    });
+    for (const d of openPartials) {
+      const mId = d.responsibleManagerId;
+      if (!mId) continue;
+      const cur = ensure(mId);
+      cur.qualifiedLeadCount += 1;
+      cur.salesCount += 1;
+      cur.revenue += d.price || 0;
+    }
 
-  // Ochiq qualifying stages (Ma'lumot berildi, To'lov sanasi kelishildi, Qisman to'lov qildi) — sifatli sanaladi
-  // Qisman to'lov yuqorida sanab bo'lingan — bu yerda dublikatga kirmaslik uchun isPartialPayment != true
-  const openQualNonPartialWhere: Record<string, unknown> = {
-    companyId,
-    statusName: { in: QUALIFYING_OPEN_STAGES },
-    semanticId: { notIn: ["S", "F"] },
-    isPartialPayment: { not: true },
-  };
-  if (dateRange) openQualNonPartialWhere.leadCreatedAt = dateRange;
-  if (pipelineIds) openQualNonPartialWhere.pipelineId = { in: pipelineIds };
-  if (managerIds) openQualNonPartialWhere.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    openQualNonPartialWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
-  }
-  const openQualNonPartial = await prisma.salesLead.findMany({
-    where: openQualNonPartialWhere,
-    select: { responsibleManagerId: true },
-  });
-  for (const d of openQualNonPartial) {
-    const mId = d.responsibleManagerId;
-    if (!mId) continue;
-    const cur = ensure(mId);
-    cur.qualifiedLeadCount += 1;
+    // Ochiq qualifying stages — sifatli sanaladi (isPartialPayment != true, dublikatsiz)
+    const openQualNonPartialWhere: Record<string, unknown> = {
+      companyId,
+      statusName: { in: QUALIFYING_OPEN_STAGES },
+      semanticId: { notIn: ["S", "F"] },
+      isPartialPayment: { not: true },
+    };
+    if (dateRange) openQualNonPartialWhere.leadCreatedAt = dateRange;
+    if (pipelineIds) openQualNonPartialWhere.pipelineId = { in: pipelineIds };
+    if (managerIds) openQualNonPartialWhere.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      openQualNonPartialWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    const openQualNonPartial = await prisma.salesLead.findMany({
+      where: openQualNonPartialWhere,
+      select: { responsibleManagerId: true },
+    });
+    for (const d of openQualNonPartial) {
+      const mId = d.responsibleManagerId;
+      if (!mId) continue;
+      const cur = ensure(mId);
+      cur.qualifiedLeadCount += 1;
+    }
   }
 
   // 3) Konversiya = sotuv / qual lid × 100 (yakunlangan dealar ichida won foizi)
@@ -440,44 +461,59 @@ const computePeriodKpis = async (
   managerIds: string[] | null = null,
   leadIdsFromPipelines: number[] | null = null,
   sourceIds: string[] | null = null,
-  bitrixLeadIdsFromSources: number[] | null = null
+  bitrixLeadIdsFromSources: number[] | null = null,
+  kpiFromLeads = false
 ) => {
-  // Leadlar = davrda yaratilgan barcha SalesLead (har qanday stage) — sifatli
-  // bilan yagona universumdan kelishi uchun: Sifatli ⊆ Lid.
-  const allLeadsW: Record<string, unknown> = { companyId };
-  if (dateRange) allLeadsW.leadCreatedAt = dateRange;
-  if (pipelineIds) allLeadsW.pipelineId = { in: pipelineIds };
-  if (managerIds) allLeadsW.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    allLeadsW.originalLeadId = { in: bitrixLeadIdsFromSources };
+  let leadCount: number;
+  let qualifiedLeadCount: number;
+  if (kpiFromLeads) {
+    // "leads" modeli — Lid = barcha Lead, Kval = Lead.isConverted.
+    const leadW: Record<string, unknown> = { companyId };
+    if (dateRange) leadW.dateCreate = dateRange;
+    if (managerIds) leadW.responsibleManagerId = { in: managerIds };
+    if (sourceIds) leadW.sourceId = { in: sourceIds };
+    if (leadIdsFromPipelines) leadW.bitrixLeadId = { in: leadIdsFromPipelines };
+    leadCount = await prisma.lead.count({ where: leadW });
+    qualifiedLeadCount = await prisma.lead.count({
+      where: { ...leadW, isConverted: true },
+    });
+  } else {
+    // "deals" modeli — Lid = davrda yaratilgan barcha SalesLead (har qanday stage)
+    const allLeadsW: Record<string, unknown> = { companyId };
+    if (dateRange) allLeadsW.leadCreatedAt = dateRange;
+    if (pipelineIds) allLeadsW.pipelineId = { in: pipelineIds };
+    if (managerIds) allLeadsW.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      allLeadsW.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    leadCount = await prisma.salesLead.count({ where: allLeadsW });
+    // Qual lid = bu davrda yakunlangan deallar — faqat QUALIFYING_CLOSED_STAGES dagi statusName.
+    const closedW: Record<string, unknown> = {
+      companyId,
+      semanticId: { in: ["S", "F"] },
+      statusName: { in: QUALIFYING_CLOSED_STAGES },
+    };
+    if (dateRange) closedW.closedAt = dateRange;
+    if (pipelineIds) closedW.pipelineId = { in: pipelineIds };
+    if (managerIds) closedW.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      closedW.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    qualifiedLeadCount = await prisma.salesLead.count({ where: closedW });
+    // Sifatli lid: ochiq holatdagi maxsus stagelar (Malumot, Tolov sanasi, Qisman)
+    const openQualW: Record<string, unknown> = {
+      companyId,
+      statusName: { in: QUALIFYING_OPEN_STAGES },
+      semanticId: { notIn: ["S", "F"] },
+    };
+    if (dateRange) openQualW.leadCreatedAt = dateRange;
+    if (pipelineIds) openQualW.pipelineId = { in: pipelineIds };
+    if (managerIds) openQualW.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      openQualW.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    qualifiedLeadCount += await prisma.salesLead.count({ where: openQualW });
   }
-  const leadCount = await prisma.salesLead.count({ where: allLeadsW });
-  // Qual lid = bu davrda yakunlangan deallar — faqat QUALIFYING_CLOSED_STAGES dagi statusName.
-  const closedW: Record<string, unknown> = {
-    companyId,
-    semanticId: { in: ["S", "F"] },
-    statusName: { in: QUALIFYING_CLOSED_STAGES },
-  };
-  if (dateRange) closedW.closedAt = dateRange;
-  if (pipelineIds) closedW.pipelineId = { in: pipelineIds };
-  if (managerIds) closedW.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    closedW.originalLeadId = { in: bitrixLeadIdsFromSources };
-  }
-  let qualifiedLeadCount = await prisma.salesLead.count({ where: closedW });
-  // Sifatli lid: ochiq holatdagi maxsus stagelar (Malumot, Tolov sanasi, Qisman)
-  const openQualW: Record<string, unknown> = {
-    companyId,
-    statusName: { in: QUALIFYING_OPEN_STAGES },
-    semanticId: { notIn: ["S", "F"] },
-  };
-  if (dateRange) openQualW.leadCreatedAt = dateRange;
-  if (pipelineIds) openQualW.pipelineId = { in: pipelineIds };
-  if (managerIds) openQualW.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    openQualW.originalLeadId = { in: bitrixLeadIdsFromSources };
-  }
-  qualifiedLeadCount += await prisma.salesLead.count({ where: openQualW });
   const qualifiedLeadRate =
     leadCount > 0 ? (qualifiedLeadCount / leadCount) * 100 : 0;
 
@@ -647,6 +683,13 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       select: { id: true, name: true, role: true, isActive: true },
     });
 
+    // Kval lid manbasi: "leads" → Lead.isConverted; aks holda deal stagelaridan.
+    const companyKpi = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { leadKpiSource: true },
+    });
+    const kpiFromLeads = companyKpi?.leadKpiSource === "leads";
+
     // ─── 1) LEADS: davrda yaratilgan lidlar ───
     // LEADS — Lead jadvalidan (Bitrix leads)
     const leadWhere: Record<string, unknown> = { companyId };
@@ -667,46 +710,54 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         responsibleManagerId: true,
       },
     });
-    // Lid soni KPI = davrda yaratilgan barcha SalesLead (har qanday stage)
-    const allLeadsWOv: Record<string, unknown> = { companyId };
-    if (dateRange) allLeadsWOv.leadCreatedAt = dateRange;
-    if (pipelineIds) allLeadsWOv.pipelineId = { in: pipelineIds };
-    if (managerIds) allLeadsWOv.responsibleManagerId = { in: managerIds };
-    if (bitrixLeadIdsFromSources) {
-      allLeadsWOv.originalLeadId = { in: bitrixLeadIdsFromSources };
-    }
-    const leadCount = await prisma.salesLead.count({ where: allLeadsWOv });
+    // ─── Lid soni + Kval lid ──────────────────────────────────────────
+    let leadCount: number;
+    let qualifiedLeadCount: number;
+    if (kpiFromLeads) {
+      // "leads" modeli — Lid = barcha Lead, Kval = Lead.isConverted (leadWhere
+      // allaqachon companyId/davr/manager/source/pipeline filtrlarini saqlaydi).
+      leadCount = await prisma.lead.count({ where: leadWhere });
+      qualifiedLeadCount = await prisma.lead.count({
+        where: { ...leadWhere, isConverted: true },
+      });
+    } else {
+      // "deals" modeli — Lid = davrda yaratilgan barcha SalesLead (har qanday stage)
+      const allLeadsWOv: Record<string, unknown> = { companyId };
+      if (dateRange) allLeadsWOv.leadCreatedAt = dateRange;
+      if (pipelineIds) allLeadsWOv.pipelineId = { in: pipelineIds };
+      if (managerIds) allLeadsWOv.responsibleManagerId = { in: managerIds };
+      if (bitrixLeadIdsFromSources) {
+        allLeadsWOv.originalLeadId = { in: bitrixLeadIdsFromSources };
+      }
+      leadCount = await prisma.salesLead.count({ where: allLeadsWOv });
 
-    // QUAL LID = bu davrda yakunlangan barcha deallar (won + lost).
-    // "Yakunga yetgan sifatli lidlar" — qachon yaratilganidan qat'iy nazar.
-    // Shu bilan Konv = sotuv / qual lid har doim 0-100% bo'ladi (cohort-consistent).
-    const closedWhereOv: Record<string, unknown> = {
-      companyId,
-      semanticId: { in: ["S", "F"] },
-      statusName: { in: QUALIFYING_CLOSED_STAGES },
-    };
-    if (dateRange) closedWhereOv.closedAt = dateRange;
-    if (pipelineIds) closedWhereOv.pipelineId = { in: pipelineIds };
-    if (managerIds) closedWhereOv.responsibleManagerId = { in: managerIds };
-    if (bitrixLeadIdsFromSources) {
-      closedWhereOv.originalLeadId = { in: bitrixLeadIdsFromSources };
+      // QUAL LID = bu davrda yakunlangan barcha deallar (won + lost).
+      const closedWhereOv: Record<string, unknown> = {
+        companyId,
+        semanticId: { in: ["S", "F"] },
+        statusName: { in: QUALIFYING_CLOSED_STAGES },
+      };
+      if (dateRange) closedWhereOv.closedAt = dateRange;
+      if (pipelineIds) closedWhereOv.pipelineId = { in: pipelineIds };
+      if (managerIds) closedWhereOv.responsibleManagerId = { in: managerIds };
+      if (bitrixLeadIdsFromSources) {
+        closedWhereOv.originalLeadId = { in: bitrixLeadIdsFromSources };
+      }
+      qualifiedLeadCount = await prisma.salesLead.count({ where: closedWhereOv });
+      // Sifatli lid: ochiq holatdagi maxsus stagelar
+      const openQualWhereOv: Record<string, unknown> = {
+        companyId,
+        statusName: { in: QUALIFYING_OPEN_STAGES },
+        semanticId: { notIn: ["S", "F"] },
+      };
+      if (dateRange) openQualWhereOv.leadCreatedAt = dateRange;
+      if (pipelineIds) openQualWhereOv.pipelineId = { in: pipelineIds };
+      if (managerIds) openQualWhereOv.responsibleManagerId = { in: managerIds };
+      if (bitrixLeadIdsFromSources) {
+        openQualWhereOv.originalLeadId = { in: bitrixLeadIdsFromSources };
+      }
+      qualifiedLeadCount += await prisma.salesLead.count({ where: openQualWhereOv });
     }
-    let qualifiedLeadCount = await prisma.salesLead.count({
-      where: closedWhereOv,
-    });
-    // Sifatli lid: ochiq holatdagi maxsus stagelar
-    const openQualWhereOv: Record<string, unknown> = {
-      companyId,
-      statusName: { in: QUALIFYING_OPEN_STAGES },
-      semanticId: { notIn: ["S", "F"] },
-    };
-    if (dateRange) openQualWhereOv.leadCreatedAt = dateRange;
-    if (pipelineIds) openQualWhereOv.pipelineId = { in: pipelineIds };
-    if (managerIds) openQualWhereOv.responsibleManagerId = { in: managerIds };
-    if (bitrixLeadIdsFromSources) {
-      openQualWhereOv.originalLeadId = { in: bitrixLeadIdsFromSources };
-    }
-    qualifiedLeadCount += await prisma.salesLead.count({ where: openQualWhereOv });
     const qualifiedLeadRate =
       leadCount > 0 ? (qualifiedLeadCount / leadCount) * 100 : 0;
 
@@ -726,6 +777,7 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         price: true,
         closedAt: true,
         leadCreatedAt: true,
+        originalLeadId: true,
         responsibleManagerId: true,
       },
     });
@@ -749,6 +801,7 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         price: true,
         closedAt: true,
         leadCreatedAt: true,
+        originalLeadId: true,
         responsibleManagerId: true,
       },
     });
@@ -892,12 +945,36 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       };
     }
 
-    // ─── 3) SALES CYCLE: leadCreatedAt → closedAt (davrda yopilgan sotuvlar bo'yicha) ───
+    // ─── 3) SALES CYCLE: lid yaratilgan vaqt → sotuv yopilgan vaqt ───
+    // Boshlanish nuqtasi = original Lead.dateCreate (lid tushgan vaqt), deal DATE_CREATE emas.
+    // Deal DATE_CREATE kech qo'yiladi (kvaldan keyin) va CLOSEDATE date-only (00:00) bo'lib,
+    // deal create → close ko'pincha manfiy chiqadi → 0 ga clamp bo'lib "0 soat" ko'rinardi.
+    const cycleOrigLeadIds = Array.from(
+      new Set(
+        saleRows
+          .map((s) => s.originalLeadId)
+          .filter((id): id is number => id != null)
+      )
+    );
+    const cycleLeadDates = cycleOrigLeadIds.length > 0
+      ? await prisma.lead.findMany({
+          where: { companyId, bitrixLeadId: { in: cycleOrigLeadIds } },
+          select: { bitrixLeadId: true, dateCreate: true },
+        })
+      : [];
+    const leadDateByBitrixId = new Map<number, Date>();
+    for (const l of cycleLeadDates) leadDateByBitrixId.set(l.bitrixLeadId, l.dateCreate);
+
     const cycleDays: number[] = [];
     const DAY_MS = 1000 * 60 * 60 * 24;
     for (const s of saleRows) {
-      if (!s.leadCreatedAt || !s.closedAt) continue;
-      const diffMs = s.closedAt.getTime() - s.leadCreatedAt.getTime();
+      if (!s.closedAt) continue;
+      // Lid tushgan vaqt: original Lead.dateCreate, topilmasa deal leadCreatedAt'ga qaytamiz
+      const startAt =
+        (s.originalLeadId != null && leadDateByBitrixId.get(s.originalLeadId)) ||
+        s.leadCreatedAt;
+      if (!startAt) continue;
+      const diffMs = s.closedAt.getTime() - startAt.getTime();
       cycleDays.push(Math.max(diffMs / DAY_MS, 0));
     }
     const cycle = {
@@ -992,7 +1069,8 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         pipelineIds,
         managerIds,
         sourceIds,
-        bitrixLeadIdsFromSources
+        bitrixLeadIdsFromSources,
+        kpiFromLeads
       ),
       prevRange
         ? computeByManagerMap(
@@ -1001,7 +1079,8 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
             pipelineIds,
             managerIds,
             sourceIds,
-            bitrixLeadIdsFromSources
+            bitrixLeadIdsFromSources,
+            kpiFromLeads
           )
         : Promise.resolve(new Map<string, ManagerStats>()),
     ]);
@@ -1048,7 +1127,8 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
           managerIds,
           prevLeadIdsFromPipelines,
           sourceIds,
-          bitrixLeadIdsFromSources
+          bitrixLeadIdsFromSources,
+          kpiFromLeads
         )
       : null;
 
@@ -1222,6 +1302,13 @@ export const getManagersSales = async (
     const bitrixLeadIdsFromSources = sourceIds
       ? await resolveBitrixLeadIdsForSources(companyId, sourceIds)
       : null;
+
+    // KPI modeli — overview/detal bilan bir xil bo'lishi uchun (ROZGOVOR = "leads")
+    const companyKpi = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { leadKpiSource: true },
+    });
+    const kpiFromLeads = companyKpi?.leadKpiSource === "leads";
 
     const managers = await prisma.manager.findMany({
       where: {
@@ -1415,12 +1502,20 @@ export const getManagersSales = async (
     const totalRevenue = sales.reduce((s, r) => s + cleanPrice(r.price), 0);
     const rows = managers
       .map((m) => {
-        const a = agg.get(m.id);
-        if (!a) return null;
-        // Qual lid = bu davrda yopilgan barcha deallar (won + lost).
-        // Bu = "yakunga yetgan sifatli lidlar" — qachon yaratilganidan qat'iy nazar.
-        // Konv = sotuv / qual lid. Ikkala son bir cohort'dan, har doim 0-100%.
-        const qualForCard = a.closedTotal;
+        // Barcha aktiv menejer ko'rinsin — aktivligi yo'qlar nol bilan.
+        const a = agg.get(m.id) ?? {
+          leadCount: 0,
+          qualifiedLeadCount: 0,
+          salesCount: 0,
+          closedTotal: 0,
+          revenue: 0,
+          sparkline: new Map<string, number>(dayKeys.map((k) => [k, 0] as [string, number])),
+        };
+        // Qual lid:
+        //  - "leads" modeli (ROZGOVOR): Lead.isConverted — overview/detal bilan bir xil.
+        //  - "deals" modeli (ProSales): bu davrda yopilgan barcha deallar (won+lost).
+        // Konv = sotuv / qual lid (har doim 0-100%).
+        const qualForCard = kpiFromLeads ? a.qualifiedLeadCount : a.closedTotal;
         const conversion =
           qualForCard > 0 ? (a.salesCount / qualForCard) * 100 : 0;
         const revenueShare = totalRevenue > 0 ? (a.revenue / totalRevenue) * 100 : 0;
