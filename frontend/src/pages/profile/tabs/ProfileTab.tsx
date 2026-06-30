@@ -1,7 +1,7 @@
 import React, { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { ArrowLeft, Building2, FileText, Eye, EyeOff, Camera, Loader2 } from "lucide-react";
+import { ArrowLeft, Building2, FileText, Eye, EyeOff, Camera, Loader2, Clock, Save } from "lucide-react";
 import Button from "../../../components/ui/Button";
 import Skeleton from "../../../components/ui/Skeleton";
 import Avatar from "../../../components/ui/Avatar";
@@ -174,6 +174,81 @@ const ProfileAvatarUploader: React.FC<{
         className="hidden"
         onChange={handleFile}
       />
+    </div>
+  );
+};
+
+// Admin-only — jamoaning ish vaqti (workStart/workEnd). "Aloqaga chiqish"
+// metrikasi shu oynaga ko'ra ish-vaqti bo'yicha hisoblanadi. Menejerlar ko'rmaydi.
+const AdminWorkHoursCard: React.FC = () => {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["bot-schedule"],
+    queryFn: profileService.getBotSchedule,
+  });
+
+  const [workStart, setWorkStart] = useState("09:00");
+  const [workEnd, setWorkEnd] = useState("18:00");
+
+  React.useEffect(() => {
+    const c = data?.company;
+    if (c) {
+      setWorkStart(c.adminWorkStart || "09:00");
+      setWorkEnd(c.adminWorkEnd || "18:00");
+    }
+  }, [data]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      profileService.updateBotSchedule({ adminWorkStart: workStart, adminWorkEnd: workEnd }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bot-schedule"] });
+      toast.success("Saqlandi");
+    },
+    onError: () => toast.error("Xatolik"),
+  });
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-6">
+      <div className="flex items-center gap-2 mb-2">
+        <Clock size={18} className="text-accent" />
+        <h4 className="text-base font-medium" style={{ color: "var(--text-primary)" }}>
+          Ish vaqti (jamoa)
+        </h4>
+      </div>
+      <p className="text-xs text-secondary mb-4">
+        "Aloqaga chiqish" ko'rsatkichi shu oynaga ko'ra ish vaqti bo'yicha hisoblanadi.
+        Dam kunlari davomatdan olinadi.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md">
+        <label className="block">
+          <div className="text-xs text-secondary mb-1">Ish boshlash</div>
+          <input
+            type="time"
+            value={workStart}
+            onChange={(e) => setWorkStart(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-border bg-primary text-sm"
+            style={{ color: "var(--text-primary)" }}
+          />
+        </label>
+        <label className="block">
+          <div className="text-xs text-secondary mb-1">Ish tugashi</div>
+          <input
+            type="time"
+            value={workEnd}
+            onChange={(e) => setWorkEnd(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-border bg-primary text-sm"
+            style={{ color: "var(--text-primary)" }}
+          />
+        </label>
+      </div>
+      <button
+        onClick={() => save.mutate()}
+        disabled={save.isPending}
+        className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-xl hover:opacity-90 disabled:opacity-60"
+      >
+        <Save size={16} /> Saqlash
+      </button>
     </div>
   );
 };
@@ -541,6 +616,9 @@ const ProfileTab: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ISH VAQTI (jamoa) — faqat admin */}
+      <AdminWorkHoursCard />
 
       {/* KOMPANIYA HAQIDA */}
       <div className="bg-card border border-border rounded-xl p-6">

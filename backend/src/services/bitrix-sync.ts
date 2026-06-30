@@ -106,8 +106,10 @@ async function getCurrencyMap(): Promise<Map<string, number>> {
   return map;
 }
 
-// Bitrix deal "Yopilish sababi" enumeration maydoni.
-const DEAL_REASON_FIELD = "UF_CRM_1777802548185";
+// Bitrix deal rad etish sababi — "Sifatsiz lid" enumeration (rozgovoruz portali).
+// ⚠️ UF_CRM_* ID portalga XOS. Eski UF_CRM_1777802548185 boshqa portalniki edi → bu portalda
+//    yo'q bo'lgani uchun closeReasonName doim null bo'lib, card ko'rinmasdi.
+const DEAL_REASON_FIELD = "UF_CRM_69CFC6BD9EFCB";
 
 // Reason enum cache (10 daqiqa): enum ID (string) → label.
 let reasonMapCache: { map: Map<string, string>; expiresAt: number } | null = null;

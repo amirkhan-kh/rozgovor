@@ -70,6 +70,7 @@ async function fetchAllDeals(dateFromISO) {
         "ASSIGNED_BY_ID",
         "LEAD_ID",
         KELISHILGAN_FIELD,
+        "UF_CRM_69CFC6BD9EFCB",
       ],
       order: { DATE_CREATE: "ASC" },
       start,
@@ -112,6 +113,7 @@ async function fetchAllClosedSales(dateFromISO) {
         "ASSIGNED_BY_ID",
         "LEAD_ID",
         KELISHILGAN_FIELD,
+        "UF_CRM_69CFC6BD9EFCB",
       ],
       order: { CLOSEDATE: "ASC" },
       start,
@@ -223,6 +225,15 @@ async function main() {
   const rates = await getCurrencyMap();
   console.log(`   ${rates.size} ta valyuta (USD=${rates.get("USD")})`);
 
+  console.log("2c) Rad etish sabablari enum yig'ilyapti...");
+  const reasonMap = new Map();
+  {
+    const f = await bitrixCall("crm.deal.fields");
+    const items = ((f.result || {})["UF_CRM_69CFC6BD9EFCB"] || {}).items || [];
+    for (const it of items) reasonMap.set(String(it.ID), String(it.VALUE));
+  }
+  console.log(`   ${reasonMap.size} ta sabab`);
+
   console.log("3) Deallar yuklanmoqda (created)...");
   const createdDeals = await fetchAllDeals(dateFromISO);
   console.log(`   ${createdDeals.length} ta created`);
@@ -252,6 +263,14 @@ async function main() {
     const amoUserId = d.ASSIGNED_BY_ID ? String(d.ASSIGNED_BY_ID) : null;
     const leadCreatedAt = d.DATE_CREATE ? new Date(d.DATE_CREATE) : new Date();
     const closedAt = d.CLOSEDATE ? new Date(d.CLOSEDATE) : null;
+    const rawReason = d["UF_CRM_69CFC6BD9EFCB"];
+    const closeReasonId =
+      rawReason === null || rawReason === undefined || rawReason === ""
+        ? null
+        : String(rawReason);
+    const closeReasonName = closeReasonId
+      ? reasonMap.get(closeReasonId) || null
+      : null;
     const rawAgreed = d[KELISHILGAN_FIELD];
     const agreedPaymentDate =
       rawAgreed && String(rawAgreed).length > 0 ? new Date(rawAgreed) : null;
@@ -275,6 +294,8 @@ async function main() {
         isPartialPayment,
         agreedPaymentDate,
         originalLeadId: d.LEAD_ID ? Number(d.LEAD_ID) : null,
+        closeReasonId,
+        closeReasonName,
       },
       update: {
         pipelineId: categoryId,
@@ -289,6 +310,8 @@ async function main() {
         isSale,
         isPartialPayment,
         agreedPaymentDate,
+        closeReasonId,
+        closeReasonName,
       },
     });
     upserted += 1;

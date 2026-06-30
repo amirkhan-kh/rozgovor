@@ -15,6 +15,7 @@ interface AudioFilters {
   showNoConversation?: string;
   pipeline?: string;
   minDurationSec?: string;
+  rejectionReason?: string;
 }
 
 export const audioService = {

@@ -1,6 +1,11 @@
 import { Request, Response } from "express";
 import { prisma } from "../utils/prisma";
 import { success, error } from "../utils/response";
+import {
+  rejectionAnalysisSelect,
+  getRejectionInfo,
+  attachLeadCloseReasons,
+} from "../utils/rejection-info";
 
 // Tashkent TZ (UTC+5) — dashboard/sales bilan bir xil
 const TZ = 5;
@@ -88,6 +93,47 @@ const getDateRange = (
   }
 };
 
+const parseCsv = (v: unknown): string[] =>
+  typeof v === "string" && v.trim().length > 0
+    ? v.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+
+// Audit filtrlaridan AudioFile `where` quradi (overview + lost-verdicts uchun umumiy).
+// Davr filtri HAQIQIY qo'ng'iroq vaqti (callDate) bo'yicha — sync vaqti (createdAt) emas;
+// callDate yo'q yozuvlar uchun createdAt'ga qaytamiz.
+const buildAudioFileWhere = (req: Request) => {
+  const companyId = req.companyId!;
+  const period = (req.query.period as string) || "month";
+  const dateFrom = req.query.dateFrom as string | undefined;
+  const dateTo = req.query.dateTo as string | undefined;
+  const managerId = req.query.managerId as string | undefined;
+  const managerIds = parseCsv(req.query.managerIds);
+  const pipelines = parseCsv(req.query.pipelines);
+  const sourceIds = parseCsv(req.query.sourceIds);
+  const minDurationSecRaw = req.query.minDurationSec as string | undefined;
+  const minDurationSec =
+    minDurationSecRaw && !Number.isNaN(Number(minDurationSecRaw))
+      ? Math.max(0, Math.floor(Number(minDurationSecRaw)))
+      : 0;
+
+  const dateRange = getDateRange(period, dateFrom, dateTo);
+
+  const where: Record<string, unknown> = { companyId };
+  if (dateRange) {
+    where.OR = [
+      { callDate: dateRange },
+      { callDate: null, createdAt: dateRange },
+    ];
+  }
+  if (managerId && managerId !== "all") where.managerId = managerId;
+  else if (managerIds.length > 0) where.managerId = { in: managerIds };
+  if (pipelines.length > 0) where.pipelineName = { in: pipelines };
+  if (sourceIds.length > 0) where.sourceId = { in: sourceIds };
+  if (minDurationSec > 0) where.duration = { gte: minDurationSec };
+
+  return { companyId, period, dateRange, where, managerId, managerIds, sourceIds };
+};
+
 // Audit KPI:
 //   totalCalls         — umumiy AudioFile
 //   outgoing           — direction = "outgoing"
@@ -101,42 +147,8 @@ export const getAuditOverview = async (
   res: Response
 ): Promise<void> => {
   try {
-    const companyId = req.companyId!;
-    const period = (req.query.period as string) || "month";
-    const dateFrom = req.query.dateFrom as string | undefined;
-    const dateTo = req.query.dateTo as string | undefined;
-    const managerId = req.query.managerId as string | undefined;
-    const parseCsv = (v: unknown): string[] =>
-      typeof v === "string" && v.trim().length > 0
-        ? v.split(",").map((s) => s.trim()).filter(Boolean)
-        : [];
-    const managerIds = parseCsv(req.query.managerIds);
-    const pipelines = parseCsv(req.query.pipelines);
-    const sourceIds = parseCsv(req.query.sourceIds);
-    const minDurationSecRaw = req.query.minDurationSec as string | undefined;
-    const minDurationSec =
-      minDurationSecRaw && !Number.isNaN(Number(minDurationSecRaw))
-        ? Math.max(0, Math.floor(Number(minDurationSecRaw)))
-        : 0;
-
-    const dateRange = getDateRange(period, dateFrom, dateTo);
-
-    const where: Record<string, unknown> = { companyId };
-    // Davr filtri HAQIQIY qo'ng'iroq vaqti (callDate) bo'yicha — DB'ga sync
-    // qilingan vaqt (createdAt) bo'yicha EMAS. Aks holda bulk-sync hamma yozuvni
-    // bitta kunga jamlab "Bu oy"="Bu hafta" va "Bugun"=0 noto'g'ri chiqarardi.
-    // callDate yo'q (qo'lda yuklangan) yozuvlar uchun createdAt'ga qaytamiz.
-    if (dateRange) {
-      where.OR = [
-        { callDate: dateRange },
-        { callDate: null, createdAt: dateRange },
-      ];
-    }
-    if (managerId && managerId !== "all") where.managerId = managerId;
-    else if (managerIds.length > 0) where.managerId = { in: managerIds };
-    if (pipelines.length > 0) where.pipelineName = { in: pipelines };
-    if (sourceIds.length > 0) where.sourceId = { in: sourceIds };
-    if (minDurationSec > 0) where.duration = { gte: minDurationSec };
+    const { companyId, period, dateRange, where, managerId, managerIds, sourceIds } =
+      buildAudioFileWhere(req);
 
     // Hamma audio fayllar (no_audio placeholder'dan tashqari)
     const allAudios = await prisma.audioFile.findMany({
@@ -269,5 +281,62 @@ export const getAuditOverview = async (
   } catch (err) {
     console.error("Audit overview error:", err);
     error(res, "Audit statistikasini olishda xatolik");
+  }
+};
+
+// Yo'qotilgan lidlar — manager haq/nohaq verdict taqsimoti (pie chart uchun aggregate).
+// "Lost" = SalesLead.closeReasonName belgilangan (getRejectionInfo non-null qaytaradi).
+// Verdict per-audio audio.controller bilan bir xil logikadan (utils/rejection-info) keladi.
+export const getLostVerdicts = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { companyId, where } = buildAudioFileWhere(req);
+
+    // Faqat tahlil qilingan, suhbati bor audiolar
+    const candidates = await prisma.audioFile.findMany({
+      where: {
+        ...where,
+        status: { notIn: ["no_audio", "no_conversation"] },
+        analysis: { isNot: null },
+      },
+      select: {
+        id: true,
+        leadId: true,
+        phoneNumber: true,
+        isSale: true,
+        pipelineName: true,
+        analysis: { select: rejectionAnalysisSelect },
+      },
+    });
+
+    const withReasons = await attachLeadCloseReasons(companyId, candidates);
+
+    let right = 0;
+    let wrong = 0;
+    let unclear = 0;
+    let total = 0;
+    for (const a of withReasons) {
+      const info = getRejectionInfo(a.analysis, a); // null = yo'qotilgan lid emas
+      if (!info) continue;
+      total += 1;
+      const status = info.managerVerdict?.status;
+      if (status === "right") right += 1;
+      else if (status === "wrong") wrong += 1;
+      else unclear += 1; // unclear + unknown (closeReasonName bor → unknown amalda chiqmaydi)
+    }
+
+    success(res, {
+      total,
+      breakdown: [
+        { key: "right", label: "Haq", count: right },
+        { key: "wrong", label: "Nohaq", count: wrong },
+        { key: "unclear", label: "Aniq emas", count: unclear },
+      ],
+    });
+  } catch (err) {
+    console.error("Audit lost-verdicts error:", err);
+    error(res, "Yo'qotilgan lid statistikasini olishda xatolik");
   }
 };

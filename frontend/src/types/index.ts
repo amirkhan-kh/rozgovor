@@ -254,7 +254,26 @@ export interface Analysis {
   closeAttempts?: CloseAttemptsBlock | null;
   voiceOfCustomer?: VoiceOfCustomer | null;
   intentSignals?: IntentSignalsBlock | null;
+  // 🚩 Yo'qotilgan lid tahlili + manager haq/noxaq verdict (server biriktiradi)
+  rejectionInfo?: RejectionInfo | null;
   createdAt: string;
+}
+
+export interface ManagerVerdict {
+  status: "right" | "wrong" | "unclear" | "unknown";
+  label: string;
+  short: string;
+  detail: string;
+}
+
+export interface RejectionInfo {
+  type: string; // price|timing|competitor|authority|need|trust|fit|other
+  label: string;
+  short: string;
+  detail: string;
+  managerReason?: string | null;
+  managerVerdict?: ManagerVerdict;
+  evidence?: string[];
 }
 
 export interface ManagerGrowthCard {

@@ -21,7 +21,8 @@ export interface SalesCycle {
 }
 
 export interface SalesTimeToContact {
-  avgHours: number;
+  avgHours: number; // umumiy (xom) o'rtacha soat
+  avgWorkHours: number; // faqat ish vaqti bo'yicha o'rtacha soat
   totalLeadsCount: number;
   contactedLeadsCount: number;
 }

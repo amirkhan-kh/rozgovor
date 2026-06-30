@@ -1553,10 +1553,21 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
               <div className="flex items-center gap-5 flex-wrap">
                 <div className="text-center">
                   <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                    O'rtacha
+                    Umumiy
                   </p>
                   <p className="text-2xl font-bold" style={{ color: "#14b8a6" }}>
                     {formatHoursOrDays(data.timeToContact.avgHours)}
+                  </p>
+                </div>
+                <div
+                  className="text-center pl-4 border-l"
+                  style={{ borderColor: "var(--color-border)" }}
+                >
+                  <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                    Ish vaqti bo'yicha
+                  </p>
+                  <p className="text-2xl font-bold" style={{ color: "#14b8a6" }}>
+                    {formatHoursOrDays(data.timeToContact.avgWorkHours)}
                   </p>
                 </div>
                 <div
@@ -1711,7 +1722,7 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
           accentColor="#ef4444"
           items={data.rejectionBreakdown}
           emptyText="Davrda rad etilgan deal yo'q"
-          maxSlices={30}
+          maxSlices={4}
         />
       )}
 

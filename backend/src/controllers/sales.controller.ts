@@ -4,6 +4,7 @@ import { prisma } from "../utils/prisma";
 import { success, error } from "../utils/response";
 import { cache } from "../utils/cache";
 import { BITRIX_WEBHOOK_URL as BITRIX_WEBHOOK } from "../utils/bitrix-config";
+import { businessHoursBetween, parseHmToMinutes } from "../utils/business-hours";
 
 // "Sifatli lid" — faqat shu 5 stage'da hisoblanadi (boshqa won/lost stagelar emas).
 // Ochiq stagelar (lead hali yopilmagan):
@@ -762,7 +763,7 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
     // Kval lid manbasi: "leads" → Lead.isConverted; aks holda deal stagelaridan.
     const companyKpi = await prisma.company.findUnique({
       where: { id: companyId },
-      select: { leadKpiSource: true },
+      select: { leadKpiSource: true, adminWorkStart: true, adminWorkEnd: true },
     });
     const kpiFromLeads = companyKpi?.leadKpiSource === "leads";
 
@@ -1105,25 +1106,61 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
     };
 
     // ─── TIME TO CONTACT: lid yaratilgandan birinchi aloqagacha ─
+    // avgHours      — umumiy (xom, wall-clock) o'rtacha soat
+    // avgWorkHours  — faqat ish vaqti (company adminWorkStart/End + mas'ul
+    //                 menejer davomatidagi dam kunlari, Tashkent TZ) bo'yicha
     let timeToContact: {
       avgHours: number;
+      avgWorkHours: number;
       totalLeadsCount: number;
       contactedLeadsCount: number;
     };
+    // Ish oynasi — company default (bo'sh bo'lsa 09:00–18:00).
+    const workStartMin = parseHmToMinutes(companyKpi?.adminWorkStart, 9 * 60);
+    const workEndMin = parseHmToMinutes(companyKpi?.adminWorkEnd, 18 * 60);
+    // Davomatdagi dam kunlari (status 1=dam, 2=ishlamagan — bayramlar ham shu
+    // yerda) — mas'ul menejer bo'yicha. Lidda menejer yo'q bo'lsa faqat tungi
+    // oyna qo'llanadi (dam kuni o'tkazilmaydi).
+    const dayOffRows = await prisma.managerSchedule.findMany({
+      where: { manager: { companyId }, status: { in: [1, 2] } },
+      select: { managerId: true, date: true },
+    });
+    const daysOffByManager = new Map<string, Set<string>>();
+    for (const r of dayOffRows) {
+      let set = daysOffByManager.get(r.managerId);
+      if (!set) {
+        set = new Set<string>();
+        daysOffByManager.set(r.managerId, set);
+      }
+      set.add(r.date);
+    }
+    const daysOffFor = (managerId: string | null | undefined): Set<string> | undefined =>
+      managerId ? daysOffByManager.get(managerId) : undefined;
+    const avgRounded = (arr: number[]): number =>
+      arr.length > 0
+        ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10
+        : 0;
     if (kpiFromLeads) {
       // ROZGOVOR — Lead.clientPhone ↔ AudioFile.phoneNumber bo'yicha birinchi qo'ng'iroq
       const normPhone = (s: string | null) =>
         (s || "").replace(/\D/g, "").replace(/^998/, "").slice(-9);
       const leadsForContact = await prisma.lead.findMany({
         where: dateRange ? { companyId, dateCreate: dateRange } : { companyId },
-        select: { clientPhone: true, dateCreate: true },
+        select: { clientPhone: true, dateCreate: true, responsibleManagerId: true },
       });
-      const leadCreatedByPhone = new Map<string, Date>();
+      const leadCreatedByPhone = new Map<
+        string,
+        { date: Date; managerId: string | null }
+      >();
       for (const l of leadsForContact) {
         const k = normPhone(l.clientPhone);
         if (k.length >= 7) {
           const prev = leadCreatedByPhone.get(k);
-          if (!prev || l.dateCreate < prev) leadCreatedByPhone.set(k, l.dateCreate);
+          if (!prev || l.dateCreate < prev.date)
+            leadCreatedByPhone.set(k, {
+              date: l.dateCreate,
+              managerId: l.responsibleManagerId,
+            });
         }
       }
       const contactAudiosLm = await prisma.audioFile.findMany({
@@ -1138,18 +1175,24 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         if (!prev || a.callDate < prev) firstCallByPhone.set(k, a.callDate);
       }
       const gapsLm: number[] = [];
+      const workGapsLm: number[] = [];
       for (const [k, call] of firstCallByPhone) {
-        const created = leadCreatedByPhone.get(k)!;
-        const diff = call.getTime() - created.getTime();
-        if (diff >= 0) gapsLm.push(diff / 3_600_000);
+        const lead = leadCreatedByPhone.get(k)!;
+        const diff = call.getTime() - lead.date.getTime();
+        if (diff >= 0) {
+          gapsLm.push(diff / 3_600_000);
+          workGapsLm.push(
+            businessHoursBetween(lead.date, call, {
+              workStartMin,
+              workEndMin,
+              daysOff: daysOffFor(lead.managerId),
+            })
+          );
+        }
       }
       timeToContact = {
-        avgHours:
-          gapsLm.length > 0
-            ? Math.round(
-                (gapsLm.reduce((a, b) => a + b, 0) / gapsLm.length) * 10
-              ) / 10
-            : 0,
+        avgHours: avgRounded(gapsLm),
+        avgWorkHours: avgRounded(workGapsLm),
         totalLeadsCount: leadCount,
         contactedLeadsCount: gapsLm.length,
       };
@@ -1159,9 +1202,12 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
     if (dateRange) salesLeadsForContactWhere.leadCreatedAt = dateRange;
     const salesLeadsForContact = await prisma.salesLead.findMany({
       where: salesLeadsForContactWhere,
-      select: { leadId: true, leadCreatedAt: true },
+      select: { leadId: true, leadCreatedAt: true, responsibleManagerId: true },
     });
     const leadIdsInRange = salesLeadsForContact.map((sl) => sl.leadId);
+    // Lid → mas'ul menejer (davomatdagi dam kunlarini ulash uchun)
+    const leadManagerMap = new Map<number, string | null>();
+    for (const sl of salesLeadsForContact) leadManagerMap.set(sl.leadId, sl.responsibleManagerId);
     const contactAudios = leadIdsInRange.length > 0
       ? await prisma.audioFile.findMany({
           where: {
@@ -1215,14 +1261,23 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       }
     }
     const contactGapsHrs: number[] = [];
-    for (const v of firstContactByLead.values()) {
+    const contactWorkHrs: number[] = [];
+    for (const [leadId, v] of firstContactByLead) {
       const diffMs = v.first.getTime() - v.created.getTime();
-      if (diffMs >= 0) contactGapsHrs.push(diffMs / 3_600_000);
+      if (diffMs >= 0) {
+        contactGapsHrs.push(diffMs / 3_600_000);
+        contactWorkHrs.push(
+          businessHoursBetween(v.created, v.first, {
+            workStartMin,
+            workEndMin,
+            daysOff: daysOffFor(leadManagerMap.get(leadId)),
+          })
+        );
+      }
     }
     timeToContact = {
-      avgHours: contactGapsHrs.length > 0
-        ? Math.round((contactGapsHrs.reduce((a, b) => a + b, 0) / contactGapsHrs.length) * 10) / 10
-        : 0,
+      avgHours: avgRounded(contactGapsHrs),
+      avgWorkHours: avgRounded(contactWorkHrs),
       totalLeadsCount: leadCount,
       contactedLeadsCount: firstContactByLead.size,
     };
@@ -1320,21 +1375,19 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       count: r._count.bitrixLeadId,
     }));
 
-    // ─── 7) Rad etish sabablari (Yopilish sababi) ──────────────────────
-    // Bitrix DEAL "Сделка провалена" (semantic F) + deal custom field
-    // UF_CRM_1777802548185 ("Xato raqam", "Dubl", "Boshqa kurs olib bolgan"
-    // ...). Bitrix Kanban "Сделка провалена" bilan to'liq mos. Lead/JUNK
-    // emas — eski usul boshqa entity edi, mos kelmasdi.
-    // BARCHA sabablar (top-N kesilmaydi) — frontendda to'liq ko'rsatiladi.
+    // ─── 7) Rad etish sabablari ("Sifatsiz lid" — UF_CRM_69CFC6BD9EFCB) ──
+    // A usul: sabab belgilangan HAR QANDAY deal (semanticId filtrisiz). Bu
+    // portalda sabab F-deal'ga emas, NEW/P (jarayonda) deal'ga belgilanadi,
+    // shuning uchun semanticId:"F" filtri bo'lmaydi. Davr filtri leadCreatedAt
+    // (closedAt EMAS — sabab yopilmagan deal'da, closedAt reja sanasi bo'lib aldaydi).
     const dealRejectRows = await prisma.salesLead.groupBy({
       by: ["closeReasonName"],
       where: (() => {
         const w: Record<string, unknown> = {
           companyId,
-          semanticId: "F",
           closeReasonName: { not: null },
         };
-        if (dateRange) w.closedAt = dateRange;
+        if (dateRange) w.leadCreatedAt = dateRange;
         if (pipelineIds) w.pipelineId = { in: pipelineIds };
         if (managerIds) w.responsibleManagerId = { in: managerIds };
         if (bitrixLeadIdsFromSources)

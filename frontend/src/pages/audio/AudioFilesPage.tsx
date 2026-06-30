@@ -6,7 +6,7 @@ import {
   Upload, Search, ChevronLeft, ChevronRight, Play, CheckSquare,
   Filter, RefreshCw, Loader2, LayoutGrid, List, Settings, MoreVertical,
   Phone, Clock, User, Trash2, Eye, X, GitBranch, Tag, Calendar as CalendarIcon,
-  CheckCircle, Timer,
+  CheckCircle, Timer, Flag,
 } from "lucide-react";
 import {
   ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Tooltip as ReTooltip,
@@ -38,6 +38,7 @@ type SavedAudioFilters = {
   responseFilter?: string;
   durationMin?: string;
   showNoConversation?: boolean;
+  rejectionReason?: string;
 };
 const loadSavedFilters = (): SavedAudioFilters => {
   try {
@@ -137,6 +138,14 @@ const scoreTier = (score: number): { accent: string; bg: string; label: string }
   if (score >= 60) return { accent: "#eab308", bg: "rgba(234,179,8,0.12)", label: "Yaxshi" };
   if (score >= 40) return { accent: "#f97316", bg: "rgba(249,115,22,0.12)", label: "O'rtacha" };
   return { accent: "#ef4444", bg: "rgba(239,68,68,0.12)", label: "Past" };
+};
+
+// 🚩 Manager haq/noxaq verdict uslubi (AudioDetailPage bilan bir xil)
+const verdictStyle = (status?: string) => {
+  if (status === "right") return { label: "Manager haq", color: "#22c55e", bg: "rgba(34,197,94,0.12)", border: "rgba(34,197,94,0.28)" };
+  if (status === "wrong") return { label: "Manager nohaq", color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.28)" };
+  if (status === "unclear") return { label: "Aniq emas", color: "#f59e0b", bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.28)" };
+  return { label: "Sabab yo'q", color: "#94a3b8", bg: "rgba(148,163,184,0.1)", border: "rgba(148,163,184,0.22)" };
 };
 
 // Criterion nomlarini radar uchun qisqa qilish
@@ -405,15 +414,17 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
   }, [lockedPipelineName]);
   const [responseFilter, setResponseFilter] = useState(saved.responseFilter ?? "");
   const [durationMin, setDurationMin] = useState(saved.durationMin ?? "");
+  // 🚩 "Yo'qotilgan lidlar" filtri — "" o'chiq, "all" yoniq (faqat closeReasonName bor lidlar)
+  const [rejectionReason, setRejectionReason] = useState(saved.rejectionReason ?? "");
 
   // Filtrlarni sessionStorage'ga avtomatik saqlash — orqaga qaytganda tiklash uchun
   useEffect(() => {
     const state: SavedAudioFilters = {
       page, search, managerId, category, status, period,
-      dateFrom, dateTo, pipeline, responseFilter, durationMin, showNoConversation,
+      dateFrom, dateTo, pipeline, responseFilter, durationMin, showNoConversation, rejectionReason,
     };
     try { sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(state)); } catch {}
-  }, [page, search, managerId, category, status, period, dateFrom, dateTo, pipeline, responseFilter, durationMin, showNoConversation]);
+  }, [page, search, managerId, category, status, period, dateFrom, dateTo, pipeline, responseFilter, durationMin, showNoConversation, rejectionReason]);
   const [viewMode, setViewMode] = useState<"table" | "card">(() => {
     return (localStorage.getItem("audioViewMode") as "table" | "card") || "card";
   });
@@ -588,7 +599,7 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
   });
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["audioFiles", page, managerId, category, status, period, search, dateFrom, dateTo, showNoConversation, pipeline, durationMinSec],
+    queryKey: ["audioFiles", page, managerId, category, status, period, search, dateFrom, dateTo, showNoConversation, pipeline, durationMinSec, rejectionReason],
     queryFn: () =>
       audioService.getAll({
         page, limit: 12, category,
@@ -604,6 +615,7 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
         ...(showNoConversation ? { showNoConversation: "true" } : {}),
         ...(pipeline ? { pipeline } : {}),
         ...(durationMinSec > 0 ? { minDurationSec: String(durationMinSec) } : {}),
+        ...(rejectionReason ? { rejectionReason } : {}),
       }),
   });
 
@@ -674,6 +686,7 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
     setPipeline("");
     setResponseFilter("");
     setDurationMin("");
+    setRejectionReason("");
     setPage(1);
   };
 
@@ -933,6 +946,26 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
             )}
           </div>
 
+          {/* 🚩 Yo'qotilgan lidlar toggle */}
+          <button
+            onClick={() => {
+              setRejectionReason((prev) => (prev ? "" : "all"));
+              setStatus("done");
+              setPage(1);
+            }}
+            className="relative inline-flex items-center gap-1.5 px-2.5 py-2 border rounded-lg transition-colors shrink-0"
+            style={{
+              color: rejectionReason ? "#ef4444" : "var(--text-secondary)",
+              borderColor: rejectionReason ? "rgba(239,68,68,0.6)" : "var(--color-border)",
+              backgroundColor: rejectionReason ? "rgba(239,68,68,0.1)" : "transparent",
+              boxShadow: rejectionReason ? "0 0 0 3px rgba(239,68,68,0.12)" : "none",
+            }}
+            title={rejectionReason ? "Yo'qotilgan lidlar: yoniq" : "Yo'qotilgan lidlarni ko'rsatish"}
+          >
+            <Flag size={16} fill={rejectionReason ? "currentColor" : "none"} />
+            {rejectionReason && <span className="text-xs font-semibold">Yo'qotilgan</span>}
+          </button>
+
           {/* Filter button — faqat desktop */}
           <div className="relative hidden md:block">
             <button
@@ -1078,7 +1111,23 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
                           )}
                         </td>
                       )}
-                      {visibleCols.includes("leadQuality") && <td className="py-3 px-3 whitespace-nowrap">{noConv ? <span className="text-secondary">—</span> : leadBadge(audio.analysis?.leadQuality, audio.analysis?.leadScore)}</td>}
+                      {visibleCols.includes("leadQuality") && <td className="py-3 px-3 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          {noConv ? <span className="text-secondary">—</span> : leadBadge(audio.analysis?.leadQuality, audio.analysis?.leadScore)}
+                          {rejectionReason && audio.analysis?.rejectionInfo?.managerVerdict && (() => {
+                            const v = verdictStyle(audio.analysis.rejectionInfo.managerVerdict.status);
+                            return (
+                              <span
+                                className="text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                                style={{ color: v.color, backgroundColor: v.bg, border: `1px solid ${v.border}` }}
+                                title={audio.analysis.rejectionInfo.short || ""}
+                              >
+                                {v.label}
+                              </span>
+                            );
+                          })()}
+                        </span>
+                      </td>}
                       {visibleCols.includes("errors") && <td className="py-3 px-3 whitespace-nowrap">
                         {noConv ? <span className="text-secondary">—</span> : audio.analysis?.errors ? (
                           <span className={`text-sm ${audio.analysis.errors.length > 0 ? "text-red-400" : "text-secondary"}`}>
@@ -1237,6 +1286,26 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
                           {statusBadge(audio.status, audio.analysis)}
                         </div>
                       </div>
+
+                      {/* 🚩 Manager haq/noxaq verdict badge */}
+                      {rejectionReason && audio.analysis?.rejectionInfo?.managerVerdict && (() => {
+                        const v = verdictStyle(audio.analysis.rejectionInfo.managerVerdict.status);
+                        return (
+                          <div className="mb-3 flex items-center gap-2 flex-wrap">
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+                              style={{ color: v.color, backgroundColor: v.bg, border: `1px solid ${v.border}` }}
+                            >
+                              <Flag size={11} /> {v.label}
+                            </span>
+                            {audio.analysis.rejectionInfo.label && (
+                              <span className="text-[11px] text-secondary truncate" title={audio.analysis.rejectionInfo.short || ""}>
+                                {audio.analysis.rejectionInfo.label}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Header: score + manager info */}
                       <div className="flex items-start gap-3 mb-3">

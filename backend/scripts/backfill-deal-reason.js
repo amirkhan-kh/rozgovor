@@ -6,8 +6,8 @@ const prisma = new PrismaClient();
 
 const WH =
   process.env.BITRIX_WEBHOOK_URL ||
-  "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
-const FIELD = "UF_CRM_1777802548185";
+  "https://rozgovoruz.bitrix24.kz/rest/527/8cmow72uy63s4ewg";
+const FIELD = "UF_CRM_69CFC6BD9EFCB";
 
 async function bx(m, p = {}, retry = 0) {
   const r = await axios.post(`${WH}/${m}.json`, p, {

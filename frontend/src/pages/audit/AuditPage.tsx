@@ -34,6 +34,7 @@ import CriteriaManagersTable from "../dashboard/components/CriteriaManagersTable
 import WinLossBlock from "../dashboard/components/WinLossBlock";
 import ErrorsBlock from "../dashboard/components/ErrorsBlock";
 import ObjectionsChart from "../dashboard/components/ObjectionsChart";
+import LostVerdictPie from "./components/LostVerdictPie";
 
 // ── Helpers ──────────────────────────────────────────────
 const formatDuration = (sec: number): string => {
@@ -330,6 +331,11 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
   const { data: winLossData } = useQuery({
     queryKey: ["dashboard-winloss", filters],
     queryFn: () => dashboardService.getWinLoss(filters),
+  });
+  const { data: lostVerdicts } = useQuery({
+    queryKey: ["audit-lost-verdicts", baseParams],
+    queryFn: () => auditService.getLostVerdicts(baseParams),
+    enabled: filter !== "custom" || !!(range?.from && range?.to),
   });
 
   const kpis = audit?.kpis;
@@ -1145,6 +1151,11 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
             </Card>
           </div>
         </div>
+      )}
+
+      {/* ── 6) Yo'qotilgan lidlar — manager haq/nohaq verdict (pie) ─ */}
+      {lostVerdicts && lostVerdicts.total > 0 && (
+        <LostVerdictPie data={lostVerdicts} />
       )}
 
       {/* ── 7) O'rtacha qo'ng'iroq davomiyligi (Jamoa + Menejerlar) ─ */}

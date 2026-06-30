@@ -36,10 +36,25 @@ export interface AuditOverviewParams {
   minDurationSec?: number;
 }
 
+export type LostVerdictStatus = "right" | "wrong" | "unclear";
+
+export interface LostVerdicts {
+  total: number;
+  breakdown: { key: LostVerdictStatus; label: string; count: number }[];
+}
+
 export const auditService = {
   async getOverview(params: AuditOverviewParams = {}): Promise<AuditOverview> {
     const { data } = await api.get<ApiResponse<AuditOverview>>(
       "/audit/overview",
+      { params }
+    );
+    return data.data;
+  },
+
+  async getLostVerdicts(params: AuditOverviewParams = {}): Promise<LostVerdicts> {
+    const { data } = await api.get<ApiResponse<LostVerdicts>>(
+      "/audit/lost-verdicts",
       { params }
     );
     return data.data;

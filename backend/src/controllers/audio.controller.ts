@@ -7,6 +7,11 @@ import { uploadFile, deleteFile, getKeyFromUrl, getFileBuffer } from "../service
 import { processAudioFile } from "../services/processor";
 import { chatAboutCall } from "../services/call-analyzer";
 import { runBackfill, stopBackfill } from "../services/scheduler";
+import {
+  rejectionAnalysisSelect,
+  getRejectionInfo,
+  attachLeadCloseReasons,
+} from "../utils/rejection-info";
 
 export const getProgress = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -88,6 +93,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
     const limit = parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
     const { managerId, managerIds, category, status, period, search, showNoConversation } = req.query;
+    const rejectionReason = req.query.rejectionReason as string | undefined;
 
     // Faqat faol menejerlar
     const activeManagers = await prisma.manager.findMany({
@@ -262,22 +268,78 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
+    // ── 🚩 "Yo'qotilgan lidlar" filtri branchi ──────────────────────────────
+    // closeReasonName belgilangan lidlarni JS'da filtrlab, sahifani majburan kesamiz
+    // (Prisma where bilan query-time SalesLead join'ni ifodalab bo'lmaydi).
+    // ⚠️ category leadIdFilter (where.id) allaqachon qo'yilgan bo'lsa, candidate'lar
+    // shu `where`'dan olinadi — tartib saqlanadi.
+    let forcedPageIds: string[] | null = null;
+    let forcedTotal: number | null = null;
+    if (rejectionReason) {
+      const candidates = await prisma.audioFile.findMany({
+        where,
+        select: {
+          id: true, leadId: true, phoneNumber: true, isSale: true,
+          statusName: true, pipelineName: true, createdAt: true,
+          analysis: { select: rejectionAnalysisSelect },
+        },
+      });
+      const withReasons = await attachLeadCloseReasons(req.companyId!, candidates);
+      const rejectionPipeline = req.query.pipeline ? String(req.query.pipeline).trim() : "";
+      const rejectedIds = withReasons
+        .filter((a: any) => !rejectionPipeline || a.pipelineName === rejectionPipeline)
+        .filter((a: any) => {
+          const info = getRejectionInfo(a.analysis, a);
+          if (!info) return false;
+          return rejectionReason === "all" || info.type === rejectionReason;
+        })
+        .sort((a: any, b: any) => {
+          const cd = new Date(b.leadClosedAt || 0).getTime() - new Date(a.leadClosedAt || 0).getTime();
+          if (cd !== 0) return cd;
+          return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+        })
+        .map((a: any) => a.id);
+      forcedTotal = rejectedIds.length;
+      forcedPageIds = rejectedIds.slice(skip, skip + limit);
+      where.id = { in: forcedPageIds };
+    }
+
     const [audioFiles, total] = await Promise.all([
       prisma.audioFile.findMany({
         where,
         include: {
           manager: { select: { id: true, name: true } },
-          analysis: { select: { overallScore: true, leadQuality: true, leadScore: true, errors: true, criteria: true } },
+          analysis: {
+            select: {
+              overallScore: true, leadQuality: true, leadScore: true, errors: true, criteria: true,
+              summary: true, objections: true, lossPoints: true,
+              followupReason: true, followupPhrase: true, voiceOfCustomer: true, judgeReason: true,
+            },
+          },
         },
         orderBy: { createdAt: "desc" },
-        skip,
-        take: limit,
+        skip: forcedPageIds ? undefined : skip,
+        take: forcedPageIds ? undefined : limit,
       }),
-      prisma.audioFile.count({ where }),
+      forcedTotal != null ? Promise.resolve(forcedTotal) : prisma.audioFile.count({ where }),
     ]);
 
+    // Har bir qatorga lead close reason + rejectionInfo biriktirish
+    const audioFilesWithReasons = await attachLeadCloseReasons(req.companyId!, audioFiles);
+    const orderedIds = forcedPageIds ? new Map(forcedPageIds.map((id, i) => [id, i])) : null;
+    const enriched = audioFilesWithReasons
+      .map((audio: any) => ({
+        ...audio,
+        analysis: audio.analysis
+          ? { ...audio.analysis, rejectionInfo: getRejectionInfo(audio.analysis, audio) }
+          : audio.analysis,
+      }))
+      .sort((a: any, b: any) =>
+        orderedIds ? (orderedIds.get(a.id) ?? 0) - (orderedIds.get(b.id) ?? 0) : 0
+      );
+
     success(res, {
-      data: audioFiles,
+      data: enriched,
       total,
       page,
       limit,
@@ -306,7 +368,17 @@ export const getOne = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    success(res, audioFile);
+    const [audioWithReason] = await attachLeadCloseReasons(req.companyId!, [audioFile]);
+    const enriched = {
+      ...audioWithReason,
+      analysis: (audioWithReason as any).analysis
+        ? {
+            ...(audioWithReason as any).analysis,
+            rejectionInfo: getRejectionInfo((audioWithReason as any).analysis, audioWithReason),
+          }
+        : (audioWithReason as any).analysis,
+    };
+    success(res, enriched);
   } catch (err) {
     console.error("Get audio file error:", err);
     error(res, "Audio faylni olishda xatolik");
