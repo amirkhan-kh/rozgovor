@@ -183,6 +183,34 @@ const LeadJourneyPage: React.FC = () => {
         </div>
       </Card>
 
+      {/* #8 — Transfer tarixi (kim → kim) */}
+      {((data.transfers && data.transfers.length > 0) || (data.involvedManagers && data.involvedManagers.length > 1)) && (
+        <Card title="🔄 Transfer tarixi (kim → kim)">
+          {data.involvedManagers && data.involvedManagers.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <span className="text-sm" style={{ color: "var(--text-secondary)" }}>Qatnashgan menejerlar:</span>
+              {data.involvedManagers.map((m) => (
+                <span key={m} className="px-2.5 py-1 rounded-full text-[12px] font-medium" style={{ background: "rgba(79,70,229,0.15)", color: "var(--text-primary)" }}>{m}</span>
+              ))}
+            </div>
+          )}
+          {data.transfers && data.transfers.length > 0 ? (
+            <div className="space-y-2">
+              {data.transfers.map((t, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm rounded-lg px-3 py-2" style={{ background: "var(--ds-bg-base,#0b0b0f)", border: "1px solid var(--color-border,#1f1f2a)" }}>
+                  <span style={{ color: "var(--text-secondary)" }}>{t.from}</span>
+                  <span style={{ color: "#f59e0b" }}>→</span>
+                  <span className="font-semibold" style={{ color: "var(--text-primary)" }}>{t.to}</span>
+                  {t.at && <span className="ml-auto text-[12px]" style={{ color: "var(--text-muted,#64748b)" }}>{new Date(t.at).toLocaleDateString("uz")}</span>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm" style={{ color: "var(--text-muted,#64748b)" }}>Transfer aniqlanmadi — bitta menejer ishlagan.</p>
+          )}
+        </Card>
+      )}
+
       {/* Timeline */}
       <Card title="📅 Qo'ng'iroqlar tarixi">
         <div className="relative">

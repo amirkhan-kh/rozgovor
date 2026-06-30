@@ -164,24 +164,71 @@ const isPartialStage = (name: string | null | undefined): boolean => {
 };
 
 // Bir sync run'da ishlatilgan manager idlar to'plami — topilmasa avtomatik placeholder yaratiladi
+// Bitrix'dan bitta user'ni olib real ma'lumotini qaytaradi (webhook real-time).
+async function fetchBitrixUser(
+  companyId: string,
+  bitrixUserId: string
+): Promise<{ name: string; email: string; photoUrl: string | null; isActive: boolean; departmentId: string | null } | null> {
+  try {
+    const resp = await bitrixCall("user.get", { ID: bitrixUserId });
+    const arr = resp.result as Array<Record<string, unknown>> | undefined;
+    const u = Array.isArray(arr) ? arr[0] : undefined;
+    if (!u || !u.ID) return null;
+    const name = [u.NAME, u.LAST_NAME].filter(Boolean).join(" ").trim() || (u.EMAIL as string) || `User #${bitrixUserId}`;
+    const email = (u.EMAIL as string) || `bitrix_${bitrixUserId}@prosales.local`;
+    const photoUrl = (u.PERSONAL_PHOTO as string) || null;
+    const isActive = u.ACTIVE === true || u.ACTIVE === "Y";
+    let departmentId: string | null = null;
+    const deptArr = Array.isArray(u.UF_DEPARTMENT) ? (u.UF_DEPARTMENT as unknown[]) : [];
+    if (deptArr.length) {
+      const ds = String(deptArr[0]);
+      const dep = await prisma.department.findFirst({ where: { companyId, id: ds }, select: { id: true } });
+      if (dep) departmentId = ds;
+    }
+    return { name, email, photoUrl, isActive, departmentId };
+  } catch {
+    return null;
+  }
+}
+
 async function ensureManager(
   companyId: string,
   bitrixUserId: string | null
 ): Promise<string | null> {
   if (!bitrixUserId) return null;
   const managerId = `bitrix_${bitrixUserId}`;
-  // upsert: concurrent webhooklarda race oldini olish.
+
+  // Allaqachon real nom bilan mavjud bo'lsa — Bitrix'ga so'rov yubormaymiz.
+  const existing = await prisma.manager.findUnique({
+    where: { id: managerId },
+    select: { name: true },
+  });
+  if (existing && !existing.name.startsWith("User #")) return managerId;
+
+  // Yangi yoki "User #<id>" placeholder → Bitrix'dan real ma'lumot (real-time).
+  const real = await fetchBitrixUser(companyId, bitrixUserId);
+
   await prisma.manager.upsert({
     where: { id: managerId },
     create: {
       id: managerId,
-      name: `User #${bitrixUserId}`,
-      email: `bitrix_${bitrixUserId}@prosales.local`,
+      name: real?.name || `User #${bitrixUserId}`,
+      email: real?.email || `bitrix_${bitrixUserId}@prosales.local`,
+      photoUrl: real?.photoUrl ?? null,
       companyId,
-      isActive: false,
+      isActive: real?.isActive ?? false,
       role: "sotuvchi",
+      ...(real?.departmentId ? { departmentId: real.departmentId } : {}),
     },
-    update: {},
+    // Real ma'lumot kelsa placeholder nomni yangilaymiz; aks holda tegmaymiz.
+    update: real
+      ? {
+          name: real.name,
+          photoUrl: real.photoUrl,
+          isActive: real.isActive,
+          ...(real.departmentId ? { departmentId: real.departmentId } : {}),
+        }
+      : {},
   });
   return managerId;
 }

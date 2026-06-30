@@ -3,6 +3,7 @@
 import { Request, Response } from "express";
 import { prisma } from "../utils/prisma";
 import { upsertDealById, upsertLeadById } from "../services/bitrix-sync";
+import { upsertActivityById } from "./activities.controller";
 import { broadcast } from "../services/websocket";
 
 const EXPECTED_TOKEN = process.env.BITRIX_WEBHOOK_TOKEN || "";
@@ -76,6 +77,20 @@ export const bitrixWebhook = async (req: Request, res: Response): Promise<void> 
       await prisma.lead.deleteMany({ where: { companyId, bitrixLeadId: id } });
       broadcast({ type: "refresh", companyId });
       console.log(`[bitrix-webhook] ${event} lead=${id} deleted`);
+      return;
+    }
+    if (event === "ONCRMACTIVITYDELETE") {
+      await prisma.activity.deleteMany({ where: { companyId, bitrixId: String(id) } });
+      broadcast({ type: "refresh", companyId });
+      console.log(`[bitrix-webhook] ${event} activity=${id} deleted`);
+      return;
+    }
+
+    // Activity (qo'ng'iroq/zadacha) — real-time qo'ng'iroq urinishlari uchun
+    if (event.startsWith("ONCRMACTIVITY")) {
+      const ok = await upsertActivityById(companyId, id);
+      if (ok) broadcast({ type: "refresh", companyId });
+      console.log(`[bitrix-webhook] ${event} activity=${id} ok=${ok}`);
       return;
     }
 

@@ -47,6 +47,9 @@ export interface LeadJourneyData {
   lastCallAt: string | null;
   daysSinceLast: number;
   calls: JourneyCall[];
+  // #8 — individual lead transfer tarixi (menejer o'zgargan nuqtalar)
+  involvedManagers: string[];
+  transfers: Array<{ from: string; to: string; at: string }>;
   sentimentTrajectory: "improving" | "stable" | "declining";
   avgScoreTrend: number[];           // oxirgi 10 ta score
   topObjections: Array<{ type: string; count: number }>;
@@ -156,6 +159,18 @@ export async function getLeadJourney(
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
 
+  // #8 — Transfer eventlar: ketma-ket qo'ng'iroqlarda menejer o'zgargan nuqtalar
+  const transfers: Array<{ from: string; to: string; at: string }> = [];
+  const involvedSet: string[] = [];
+  let prevMgr: string | null = null;
+  for (const c of calls) {
+    const mgr = c.managerName;
+    if (!mgr) continue;
+    if (!involvedSet.includes(mgr)) involvedSet.push(mgr);
+    if (prevMgr && prevMgr !== mgr) transfers.push({ from: prevMgr, to: mgr, at: c.callDate || "" });
+    prevMgr = mgr;
+  }
+
   // AI summary
   const aiSummary = await buildAiSummary(calls, topObjections, trajectory, first.isSale || false);
 
@@ -174,6 +189,8 @@ export async function getLeadJourney(
     lastCallAt: lastDate.toISOString(),
     daysSinceLast,
     calls,
+    involvedManagers: involvedSet,
+    transfers,
     sentimentTrajectory: trajectory,
     avgScoreTrend: scores.slice(-10),
     topObjections,

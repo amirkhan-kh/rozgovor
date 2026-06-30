@@ -6,6 +6,7 @@ interface Props {
   size?: number; // px (default 36)
   className?: string;
   ring?: boolean;
+  color?: string; // berilsa — initial fon rangi shu (aks holda ism bo'yicha hsl)
 }
 
 // Telegram uslubidagi yumaloq avatar. Rasm yo'q bo'lsa — ism initial bilan
@@ -16,10 +17,10 @@ function hashHue(s: string): number {
   return h % 360;
 }
 
-const Avatar: React.FC<Props> = ({ src, name, size = 36, className = "", ring = false }) => {
+const Avatar: React.FC<Props> = ({ src, name, size = 36, className = "", ring = false, color }) => {
   const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
   const hue = hashHue(name || "?");
-  const bg = `hsl(${hue} 65% 45%)`;
+  const bg = color || `hsl(${hue} 65% 45%)`;
   const ringStyle: React.CSSProperties = ring
     ? { boxShadow: "0 0 0 2px var(--color-card-bg), 0 0 0 3px var(--color-border)" }
     : {};

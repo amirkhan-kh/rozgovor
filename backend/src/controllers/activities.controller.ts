@@ -290,3 +290,62 @@ export const syncActivities = async (
     error(res, "Activity sinxronida xatolik");
   }
 };
+
+/**
+ * Bitta activity'ni Bitrix'dan olib (crm.activity.get) DB'ga upsert qiladi.
+ * Webhook (ONCRMACTIVITY*) real-time yangilanish uchun ishlatadi.
+ */
+export async function upsertActivityById(
+  companyId: string,
+  activityId: number
+): Promise<boolean> {
+  const resp = await bitrixCall("crm.activity.get", { id: activityId });
+  const a = resp.result as Record<string, unknown> | undefined;
+  if (!a || !a.ID) return false;
+
+  const managers = await prisma.manager.findMany({
+    where: { companyId },
+    select: { id: true },
+  });
+  const managerIdSet = new Set(managers.map((m) => m.id));
+
+  const bitrixId = String(a.ID);
+  const ownerType = a.OWNER_TYPE_ID != null ? Number(a.OWNER_TYPE_ID) : null;
+  const ownerId = a.OWNER_ID ? String(a.OWNER_ID) : null;
+  const leadId = ownerType === 1 && a.OWNER_ID ? Number(a.OWNER_ID) : null;
+  const dealId = ownerType === 2 && a.OWNER_ID ? Number(a.OWNER_ID) : null;
+  const respBitrix = a.RESPONSIBLE_ID ? String(a.RESPONSIBLE_ID) : null;
+  const mappedManager =
+    respBitrix && managerIdSet.has(`bitrix_${respBitrix}`)
+      ? `bitrix_${respBitrix}`
+      : null;
+
+  const data = {
+    companyId,
+    bitrixId,
+    ownerType,
+    ownerId,
+    leadId,
+    dealId,
+    typeId: a.TYPE_ID != null ? Number(a.TYPE_ID) : null,
+    subject: (a.SUBJECT as string) || null,
+    direction: a.DIRECTION != null ? Number(a.DIRECTION) : null,
+    priority: a.PRIORITY != null ? Number(a.PRIORITY) : null,
+    responsibleId: respBitrix,
+    managerId: mappedManager,
+    deadline: a.DEADLINE ? new Date(a.DEADLINE as string) : null,
+    startTime: a.START_TIME ? new Date(a.START_TIME as string) : null,
+    endTime: a.END_TIME ? new Date(a.END_TIME as string) : null,
+    completed: a.COMPLETED === "Y" || a.COMPLETED === true,
+    status: a.STATUS != null ? Number(a.STATUS) : null,
+    createdBitrix: a.CREATED ? new Date(a.CREATED as string) : null,
+    updatedBitrix: a.LAST_UPDATED ? new Date(a.LAST_UPDATED as string) : null,
+  };
+
+  await prisma.activity.upsert({
+    where: { bitrixId },
+    create: data,
+    update: data,
+  });
+  return true;
+}

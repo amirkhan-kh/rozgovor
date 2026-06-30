@@ -498,6 +498,8 @@ export interface LeadJourneyData {
   lastCallAt: string | null;
   daysSinceLast: number;
   calls: JourneyCall[];
+  involvedManagers?: string[];
+  transfers?: Array<{ from: string; to: string; at: string }>;
   sentimentTrajectory: "improving" | "stable" | "declining";
   avgScoreTrend: number[];
   topObjections: Array<{ type: string; count: number }>;
