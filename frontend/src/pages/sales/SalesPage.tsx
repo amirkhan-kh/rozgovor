@@ -1370,7 +1370,11 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
             icon={<Filter size={20} />}
             gradient="linear-gradient(135deg, #06b6d4, #0ea5e9)"
             accentColor="#06b6d4"
-            hint={`${data.kpis.qualifiedLeadRate}% — deal'ga o'tganlar`}
+            hint={
+              data.kpiFromLeads
+                ? `${data.kpis.qualifiedLeadRate}% — sifatsizdan tozalangan`
+                : `${data.kpis.qualifiedLeadRate}% — deal'ga o'tganlar`
+            }
             delta={
               data.previousKpis
                 ? computeDelta(
@@ -1389,7 +1393,11 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
             icon={<Percent size={20} />}
             gradient="linear-gradient(135deg, #8b5cf6, #ec4899)"
             accentColor="#8b5cf6"
-            hint={`${data.kpis.salesCount} sotuv / ${data.kpis.qualifiedLeadCount} sifatli lid`}
+            hint={
+              data.kpiFromLeads
+                ? `Sifatli liddan to'lovga o'tish`
+                : `${data.kpis.salesCount} sotuv / ${data.kpis.qualifiedLeadCount} sifatli lid`
+            }
             delta={
               data.previousKpis
                 ? computeDelta(data.kpis.conversionRate, data.previousKpis.conversionRate)
@@ -1422,7 +1430,9 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
             gradient="linear-gradient(135deg, #22c55e, #10b981)"
             accentColor="#22c55e"
             hint={
-              (data.kpis.partialPaymentCount ?? 0) > 0
+              data.kpiFromLeads
+                ? "To'lov qilgan kandidatlar"
+                : (data.kpis.partialPaymentCount ?? 0) > 0
                 ? `${data.kpis.partialPaymentCount} tasi qisman to'lov`
                 : "To'liq + qisman to'lov"
             }

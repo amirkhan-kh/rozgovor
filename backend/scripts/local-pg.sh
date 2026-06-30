@@ -36,7 +36,16 @@ case "${1:-}" in
     "$PGBIN/pg_ctl" -D "$PGDATA" -o "-p $PORT" -l "$PGDATA/server.log" -w start
     echo "OK → postgresql://$DB_USER@localhost:$PORT/$DB_NAME (trust, parolsiz lokal)"
     ;;
-  start) "$PGBIN/pg_ctl" -D "$PGDATA" -o "-p $PORT" -l "$PGDATA/server.log" -w start ;;
+  start)
+    if [ ! -d "$PGDATA" ]; then
+      echo "Cluster yo'q ($PGDATA). Avval: bash scripts/local-pg.sh init"; exit 1
+    fi
+    if "$PGBIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; then
+      echo "Postgres allaqachon ishlayapti (port $PORT)"
+    else
+      "$PGBIN/pg_ctl" -D "$PGDATA" -o "-p $PORT" -l "$PGDATA/server.log" -w start
+    fi
+    ;;
   stop)  "$PGBIN/pg_ctl" -D "$PGDATA" -w stop ;;
   status) "$PGBIN/pg_ctl" -D "$PGDATA" status || true ;;
   *) echo "Foydalanish: bash scripts/local-pg.sh {init|start|stop|status}"; exit 1 ;;

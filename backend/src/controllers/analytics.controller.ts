@@ -237,3 +237,112 @@ export const getResponseTime = async (req: Request, res: Response): Promise<void
     error(res, "Javob vaqti hisobotida xatolik");
   }
 };
+
+// GET /api/analytics/lead-transfers — lead transfer (kim→kim) tarixi
+// Manba: bir mijoz raqamiga (phoneNumber) tegishli qo'ng'iroqlar vaqt ketma-ketligi.
+// Qo'ng'iroq qiluvchi menejer o'zgarsa → lead o'sha menejerdan boshqasiga "o'tgan".
+// ⚠️ CRM "responsible" o'zgarish tarixi Bitrix REST'da yo'q → bu qo'ng'iroq asosidagi taxmin.
+export const getLeadTransfers = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const companyId = req.companyId!;
+    const days = req.query.days ? parseInt(req.query.days as string, 10) : 0;
+    const sinceMs = days > 0 ? Date.now() - days * 86400_000 : 0;
+
+    const managers = await prisma.manager.findMany({
+      where: { companyId },
+      select: { id: true, name: true },
+    });
+    const nameOf = new Map(managers.map((m) => [m.id, m.name]));
+
+    const calls = await prisma.audioFile.findMany({
+      where: { companyId, phoneNumber: { not: null }, managerId: { not: null } },
+      select: { phoneNumber: true, managerId: true, callDate: true, createdAt: true },
+    });
+
+    // phoneNumber bo'yicha guruh
+    const byPhone = new Map<string, Array<{ managerId: string; at: number }>>();
+    for (const c of calls) {
+      const at = (c.callDate || c.createdAt).getTime();
+      const arr = byPhone.get(c.phoneNumber!) || [];
+      arr.push({ managerId: c.managerId!, at });
+      byPhone.set(c.phoneNumber!, arr);
+    }
+
+    // Transfer eventlarini aniqlash (menejer o'zgargan nuqtalar)
+    const transfers: Array<{ phone: string; from: string; to: string; at: number }> = [];
+    for (const [phone, arr] of byPhone) {
+      arr.sort((a, b) => a.at - b.at);
+      let prev: string | null = null;
+      for (const c of arr) {
+        if (prev && prev !== c.managerId) transfers.push({ phone, from: prev, to: c.managerId, at: c.at });
+        prev = c.managerId;
+      }
+    }
+
+    const filtered = sinceMs > 0 ? transfers.filter((t) => t.at >= sinceMs) : transfers;
+
+    // Menejer kesimida berilgan/qabul qilingan
+    const per = new Map<string, { given: number; received: number }>();
+    const flowMap = new Map<string, number>();
+    for (const t of filtered) {
+      const g = per.get(t.from) || { given: 0, received: 0 };
+      g.given += 1;
+      per.set(t.from, g);
+      const r = per.get(t.to) || { given: 0, received: 0 };
+      r.received += 1;
+      per.set(t.to, r);
+      const fk = `${t.from}|${t.to}`;
+      flowMap.set(fk, (flowMap.get(fk) || 0) + 1);
+    }
+
+    const perManager = Array.from(per.entries())
+      .map(([id, v]) => ({
+        managerId: id,
+        name: nameOf.get(id) || "Noma'lum",
+        given: v.given,
+        received: v.received,
+        net: v.received - v.given,
+      }))
+      .sort((a, b) => b.given + b.received - (a.given + a.received));
+
+    const flows = Array.from(flowMap.entries())
+      .map(([k, count]) => {
+        const [from, to] = k.split("|");
+        return { from, to, fromName: nameOf.get(from) || "Noma'lum", toName: nameOf.get(to) || "Noma'lum", count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    const recent = [...filtered]
+      .sort((a, b) => b.at - a.at)
+      .slice(0, 30)
+      .map((t) => ({
+        phone: t.phone,
+        fromName: nameOf.get(t.from) || "Noma'lum",
+        toName: nameOf.get(t.to) || "Noma'lum",
+        at: new Date(t.at).toISOString(),
+      }));
+
+    let topGiver: { name: string; count: number } | null = null;
+    let topReceiver: { name: string; count: number } | null = null;
+    for (const m of perManager) {
+      if (m.given > 0 && (!topGiver || m.given > topGiver.count)) topGiver = { name: m.name, count: m.given };
+      if (m.received > 0 && (!topReceiver || m.received > topReceiver.count)) topReceiver = { name: m.name, count: m.received };
+    }
+
+    success(res, {
+      total: filtered.length,
+      managersInvolved: perManager.length,
+      uniqueLeads: new Set(filtered.map((t) => t.phone)).size,
+      topGiver,
+      topReceiver,
+      perManager,
+      flows,
+      recent,
+      note: "Qo'ng'iroqlar asosida hisoblangan: bir mijoz raqami bo'yicha qo'ng'iroq qilgan menejer vaqt o'tib o'zgarsa, lead o'tgan deb sanaladi. CRM 'responsible' o'zgarish tarixi Bitrix REST'da mavjud emas.",
+    });
+  } catch (err) {
+    console.error("Lead transfers error:", err);
+    error(res, "Transfer tarixini olishda xatolik");
+  }
+};

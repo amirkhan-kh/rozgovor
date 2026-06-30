@@ -46,7 +46,44 @@ const qs = (range?: { dateFrom?: string; dateTo?: string }) => {
   return s ? `?${s}` : "";
 };
 
+export interface TransferManager {
+  managerId: string;
+  name: string;
+  given: number;
+  received: number;
+  net: number;
+}
+export interface TransferFlow {
+  from: string;
+  to: string;
+  fromName: string;
+  toName: string;
+  count: number;
+}
+export interface TransferRecent {
+  phone: string;
+  fromName: string;
+  toName: string;
+  at: string;
+}
+export interface LeadTransferReport {
+  total: number;
+  managersInvolved: number;
+  uniqueLeads: number;
+  topGiver: { name: string; count: number } | null;
+  topReceiver: { name: string; count: number } | null;
+  perManager: TransferManager[];
+  flows: TransferFlow[];
+  recent: TransferRecent[];
+  note: string;
+}
+
 export const analyticsService = {
+  async leadTransfers(days?: number): Promise<LeadTransferReport> {
+    const q = days && days > 0 ? `?days=${days}` : "";
+    const { data } = await api.get<ApiResponse<LeadTransferReport>>(`/analytics/lead-transfers${q}`);
+    return data.data;
+  },
   async funnel(range?: { dateFrom?: string; dateTo?: string }): Promise<FunnelReport> {
     const { data } = await api.get<ApiResponse<FunnelReport>>(`/analytics/funnel${qs(range)}`);
     return data.data;

@@ -37,10 +37,11 @@ interface ErrorSummaryEntry {
   type: string;
   count: number;
   percent: number;
-  items: ErrorItem[];
+  items?: ErrorItem[];
 }
 
 interface ManagerErrorSummary {
+  managerId: string | null;
   managerName: string;
   total: number;
   types: ErrorSummaryEntry[];
@@ -50,6 +51,11 @@ interface ErrorData {
   total: number;
   summary: ErrorSummaryEntry[];
   managerSummary: ManagerErrorSummary[];
+}
+
+interface PagedItems<T> {
+  items: T[];
+  total: number;
 }
 
 interface ObjectionData {
@@ -133,6 +139,21 @@ export const dashboardService = {
     return data.data;
   },
 
+  async getErrorItems(
+    filters: DashboardFilters = {},
+    opts: { type: string; managerId?: string; offset?: number; limit?: number }
+  ): Promise<PagedItems<ErrorItem>> {
+    const sp = new URLSearchParams(buildParams(filters));
+    sp.set("type", opts.type);
+    if (opts.managerId) sp.set("managerId", opts.managerId);
+    sp.set("offset", String(opts.offset ?? 0));
+    sp.set("limit", String(opts.limit ?? 20));
+    const { data } = await api.get<ApiResponse<PagedItems<ErrorItem>>>(
+      `/dashboard/errors/items?${sp.toString()}`
+    );
+    return data.data;
+  },
+
   async getObjections(filters: DashboardFilters = {}): Promise<ObjectionData[]> {
     const { data } = await api.get<ApiResponse<ObjectionData[]>>(
       `/dashboard/objections?${buildParams(filters)}`
@@ -197,4 +218,4 @@ export const dashboardService = {
   },
 };
 
-export type { CriteriaData, CriteriaGroup, ErrorData, ErrorItem, ErrorSummaryEntry, ManagerErrorSummary, ObjectionData, WinLossData, CallsTrendData, SpeechRatioData, CategoryStatsData, SalesStatsData, SalesTrendData, DashboardFilters };
+export type { CriteriaData, CriteriaGroup, ErrorData, ErrorItem, ErrorSummaryEntry, ManagerErrorSummary, PagedItems, ObjectionData, WinLossData, CallsTrendData, SpeechRatioData, CategoryStatsData, SalesStatsData, SalesTrendData, DashboardFilters };

@@ -234,11 +234,8 @@ const PieListChart: React.FC<{
 }> = ({ title, items, icon, iconColor, limit = 8 }) => {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   if (items.length === 0) return null;
-  const top = items.slice(0, limit);
-  const restTotal = items.slice(limit).reduce((a, b) => a + b.count, 0);
-  const data = restTotal > 0
-    ? [...top, { value: "Boshqalar", count: restTotal }]
-    : top;
+  // "Boshqalar" (Others) segmenti olib tashlandi — faqat top N kategoriya ko'rsatiladi
+  const data = items.slice(0, limit);
   const total = data.reduce((a, b) => a + b.count, 0);
   const chartData = data.map((it) => ({
     name: truncate(it.value, 40),

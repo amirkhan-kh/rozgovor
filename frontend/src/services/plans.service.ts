@@ -30,6 +30,29 @@ interface TalkStats {
   managers: ManagerTalkStat[];
 }
 
+interface DailyTalkDay {
+  date: string;
+  actualMinutes: number;
+  targetMinutes: number;
+  percent: number;
+}
+
+interface DailyTalkManager {
+  managerId: string;
+  name: string;
+  days: DailyTalkDay[];
+  totalActualMinutes: number;
+  totalTargetMinutes: number;
+}
+
+interface DailyTalkTrend {
+  target: number;
+  workStartHour?: number;
+  workEndHour?: number;
+  days: string[];
+  managers: DailyTalkManager[];
+}
+
 interface ScheduleDay {
   id: string;
   managerId: string;
@@ -71,6 +94,25 @@ export const plansService = {
     const { data } = await api.get<ApiResponse<TalkStats>>(`/plans/talk-stats${params}`);
     return data.data;
   },
+  async getDailyTalkTrend(filters?: {
+    period?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    managerId?: string;
+    managerIds?: string;
+  }): Promise<DailyTalkTrend> {
+    const params = new URLSearchParams();
+    if (filters?.period) params.append("period", filters.period);
+    if (filters?.dateFrom) params.append("dateFrom", filters.dateFrom);
+    if (filters?.dateTo) params.append("dateTo", filters.dateTo);
+    if (filters?.managerId) params.append("managerId", filters.managerId);
+    if (filters?.managerIds) params.append("managerIds", filters.managerIds);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const { data } = await api.get<ApiResponse<DailyTalkTrend>>(
+      `/plans/talk-stats-daily-trend${qs}`
+    );
+    return data.data;
+  },
 
   // Schedule
   async getAllSchedules(month?: string): Promise<ManagerScheduleData[]> {
@@ -88,4 +130,4 @@ export const plansService = {
   },
 };
 
-export type { SalesPlans, PlanFact, TalkTarget, TalkStats, ManagerTalkStat, ScheduleDay, ManagerScheduleData };
+export type { SalesPlans, PlanFact, TalkTarget, TalkStats, ManagerTalkStat, ScheduleDay, ManagerScheduleData, DailyTalkTrend, DailyTalkManager, DailyTalkDay };

@@ -43,7 +43,7 @@ interface Input {
  *   5. Ma'lumot yo'q → "birinchi qo'ng'iroqni yuklang"
  */
 export function generateInsight(input: Input): DashboardInsight {
-  const { stats, benchmark, redAlerts = [], managerName } = input;
+  const { stats, benchmark, redAlerts = [] } = input;
 
   // ── 1. Critical red-alerts bor ───────────────────────────
   const critical = redAlerts.filter((a) => a.riskLevel === "critical").length;
@@ -90,7 +90,7 @@ export function generateInsight(input: Input): DashboardInsight {
         kind: "tip",
         title: "Looping texnikasi vaqti",
         message: `Jamoaning ${surrender}% qo'ng'iroqlarida e'tirozga javob berilmaydi (taslim bo'lyapti).${davronMsg}`,
-        action: { label: "Mashq qilish", path: managerName ? `/benchmark` : `/benchmark` },
+        action: { label: "Mashq qilish", path: "/exam" },
       };
     }
 
@@ -131,7 +131,7 @@ export function generateInsight(input: Input): DashboardInsight {
       kind: "success",
       title: "O'sayapsiz",
       message: `O'tgan haftaga nisbatan +${stats.growthRate}%. Bu ijobiy trend — shu ritmda davom eting va yangi mashqlarni sinab ko'ring.`,
-      action: { label: "Mashq qilish", path: "/benchmark" },
+      action: { label: "Mashq qilish", path: "/exam" },
     };
   }
 

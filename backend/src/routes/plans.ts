@@ -6,6 +6,7 @@ import {
   getTalkTarget,
   saveTalkTarget,
   getManagerTalkStats,
+  getDailyTalkTrend,
   getSchedule,
   getAllSchedules,
   updateScheduleDay,
@@ -26,6 +27,7 @@ router.get("/plan-fact", requirePermission("sales", "view"), asyncHandler(getPla
 router.get("/talk-target", requirePermission("sales", "view"), asyncHandler(getTalkTarget));
 router.put("/talk-target", requirePermission("sales", "edit_plan"), asyncHandler(saveTalkTarget));
 router.get("/talk-stats", requirePermission("sales", "view"), asyncHandler(getManagerTalkStats));
+router.get("/talk-stats-daily-trend", requirePermission("sales", "view"), asyncHandler(getDailyTalkTrend));
 
 // Manager schedule
 router.get("/schedule", requirePermission("managers", "view"), asyncHandler(getAllSchedules));

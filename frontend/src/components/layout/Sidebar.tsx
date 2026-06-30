@@ -16,7 +16,6 @@ import {
   Search,
   Library,
   Users,
-  Award,
   TrendingUp,
   Zap,
   ChevronLeft,
@@ -67,7 +66,6 @@ const navItems: NavItem[] = [
   { section: "analytics", to: "/audio", label: "Audio", icon: <Headphones size={20} />, color: "#2fcc6e", pageKey: "audio" },
   { section: "analytics", to: "/rating", label: "Reyting", icon: <Medal size={20} />, color: "#f59e0b", pageKey: "rating" },
   { section: "analytics", to: "/summaries", label: "Xulosalar", icon: <ScrollText size={20} />, color: "#06b6d4", roles: ["admin", "rop", "canViewDashboard"] },
-  { section: "analytics", to: "/benchmark", label: "Benchmark", icon: <Award size={20} />, color: "#facc15", roles: ["admin", "rop"] },
 
   // ─── Bilim va coaching ────────────────────────────────────────────
   { section: "coaching", to: "/playlists", label: "Playlistlar", icon: <PlayCircle size={20} />, color: "#2fcc6e" },

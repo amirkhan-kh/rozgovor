@@ -41,8 +41,12 @@ export function useLeaderboardWS(
           if (msg.type === "sale") {
             onSaleRef.current({ managerId: msg.managerId, managerName: msg.managerName, videoUrl: msg.videoUrl });
           } else if (msg.type === "refresh") {
+            // Bitrix real-time o'zgarishi — barcha bog'liq sotuv ko'rsatkichlari
             qc.invalidateQueries({ queryKey: ["sales-leaderboard"] });
             qc.invalidateQueries({ queryKey: ["sales-overview"] });
+            qc.invalidateQueries({ queryKey: ["sales-kelishilgan-tolov"] });
+            qc.invalidateQueries({ queryKey: ["sales-task-stats"] });
+            qc.invalidateQueries({ queryKey: ["managers-sales"] });
           }
         } catch {}
       };

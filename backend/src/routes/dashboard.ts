@@ -3,6 +3,7 @@ import {
   getStats,
   getCriteria,
   getErrors,
+  getErrorItems,
   getObjections,
   getWinLoss,
   getCallsTrend,
@@ -23,6 +24,7 @@ router.use(authMiddleware);
 router.get("/stats", asyncHandler(getStats));
 router.get("/criteria", asyncHandler(getCriteria));
 router.get("/errors", asyncHandler(getErrors));
+router.get("/errors/items", asyncHandler(getErrorItems));
 router.get("/objections", asyncHandler(getObjections));
 router.get("/win-loss", asyncHandler(getWinLoss));
 router.get("/calls-trend", asyncHandler(getCallsTrend));

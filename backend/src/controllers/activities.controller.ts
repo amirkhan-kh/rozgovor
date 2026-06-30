@@ -3,10 +3,7 @@ import axios from "axios";
 import { prisma } from "../utils/prisma";
 import { success, error } from "../utils/response";
 import { emitActivityUpdate } from "../services/websocket";
-
-const BITRIX_WEBHOOK =
-  process.env.BITRIX_WEBHOOK_URL ||
-  "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
+import { BITRIX_WEBHOOK_URL as BITRIX_WEBHOOK } from "../utils/bitrix-config";
 
 async function bitrixCall(
   method: string,

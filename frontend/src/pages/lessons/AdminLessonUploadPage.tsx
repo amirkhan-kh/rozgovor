@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Upload,
@@ -27,6 +27,7 @@ const fmtSize = (bytes: number): string => {
 
 const AdminLessonUploadPage: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const initialCourseId = searchParams.get("courseId") || "";
   const initialModuleId = searchParams.get("moduleId") || "";
@@ -108,6 +109,15 @@ const AdminLessonUploadPage: React.FC = () => {
         moduleId,
         (p) => setProgress(p)
       );
+      // Cache 5 daqiqa stale (App.tsx staleTime) — yangi dars yaratilgach modul/kurs
+      // querylari invalidatsiya qilinmasa, modul sahifasi eski "0 dars" ni ko'rsatadi.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin-module", moduleId] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-modules"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-courses"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-course"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-lesson-modules"] }),
+      ]);
       navigate(`/admin/lessons/modules/${moduleId}`);
       void result;
     } catch (err: any) {

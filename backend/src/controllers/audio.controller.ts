@@ -148,29 +148,30 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       const now = new Date();
       const dateFromParam = req.query.dateFrom as string | undefined;
       const dateToParam = req.query.dateTo as string | undefined;
+      let range: Record<string, Date> | undefined;
 
       if (period === "custom") {
-        const range: Record<string, Date> = {};
-        if (dateFromParam) range.gte = new Date(dateFromParam);
+        const r: Record<string, Date> = {};
+        if (dateFromParam) r.gte = new Date(dateFromParam);
         if (dateToParam) {
           const end = new Date(dateToParam);
           end.setHours(23, 59, 59, 999);
-          range.lte = end;
+          r.lte = end;
         }
-        if (Object.keys(range).length > 0) where.createdAt = range;
+        if (Object.keys(r).length > 0) range = r;
       } else {
         const start = new Date();
         switch (period) {
           case "today":
             start.setHours(0, 0, 0, 0);
-            where.createdAt = { gte: start };
+            range = { gte: start };
             break;
           case "yesterday": {
             start.setDate(now.getDate() - 1);
             start.setHours(0, 0, 0, 0);
             const end = new Date();
             end.setHours(0, 0, 0, 0);
-            where.createdAt = { gte: start, lt: end };
+            range = { gte: start, lt: end };
             break;
           }
           case "week": {
@@ -178,21 +179,35 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
             const diff = day === 0 ? 6 : day - 1;
             start.setDate(start.getDate() - diff);
             start.setHours(0, 0, 0, 0);
-            where.createdAt = { gte: start };
+            range = { gte: start };
             break;
           }
           case "month":
             start.setMonth(now.getMonth() - 1);
-            where.createdAt = { gte: start };
+            range = { gte: start };
             break;
           case "quarter":
             start.setMonth(now.getMonth() - 3);
-            where.createdAt = { gte: start };
+            range = { gte: start };
             break;
           case "year":
-            where.createdAt = { gte: new Date(now.getFullYear(), 0, 1) };
+            range = { gte: new Date(now.getFullYear(), 0, 1) };
             break;
         }
+      }
+
+      // Davr filtri HAQIQIY qo'ng'iroq vaqti (callDate) bo'yicha — sync vaqti
+      // (createdAt) emas. search uchun where.OR band bo'lishi mumkin → where.AND
+      // ichida OR ishlatamiz (clobber bo'lmasligi uchun). Manual upload (callDate
+      // yo'q) uchun createdAt'ga qaytamiz.
+      if (range) {
+        const dateOr = [
+          { callDate: range },
+          { callDate: null, createdAt: range },
+        ];
+        where.AND = Array.isArray(where.AND)
+          ? [...(where.AND as unknown[]), { OR: dateOr }]
+          : [{ OR: dateOr }];
       }
     }
 

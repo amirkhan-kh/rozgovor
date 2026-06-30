@@ -617,7 +617,7 @@ const DashboardPage: React.FC = () => {
               </div>
 
               <button
-                onClick={() => navigate("/benchmark")}
+                onClick={() => navigate("/exam")}
                 className="w-full mt-2 flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors"
                 style={{
                   background: "var(--ds-primary-bg)",

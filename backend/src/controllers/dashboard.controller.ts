@@ -374,25 +374,24 @@ export const getErrors = async (req: Request, res: Response): Promise<void> => {
       where: { ...where, status: "done" },
       include: {
         analysis: { select: { errors: true } },
-        manager: { select: { name: true } },
+        manager: { select: { id: true, name: true } },
       },
+      // Yangi audiolar tepada: avval qo'ng'iroq sanasi (bo'sh bo'lsa eng oxirida), keyin yaratilgan sana
+      orderBy: [{ callDate: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
     });
 
-    // Batafsil xatoliklar ro'yxati
+    // Batafsil xatoliklar ro'yxati (faqat sanoq uchun — item'lar talab bo'yicha /errors/items dan keladi)
     const allErrors: Array<{
-      type: string; description: string; timestamp: string;
-      managerName: string; audioFileId: string;
+      type: string; managerName: string; managerId: string | null;
     }> = [];
 
     for (const file of audioFiles) {
-      const errors = file.analysis?.errors as Array<{ type: string; description: string; timestamp: string }> || [];
+      const errors = file.analysis?.errors as Array<{ type: string }> || [];
       for (const err of errors) {
         allErrors.push({
           type: normalizeErrorType(err.type),
-          description: err.description || "",
-          timestamp: err.timestamp || "",
           managerName: file.manager?.name || "Noma'lum",
-          audioFileId: file.id,
+          managerId: file.manager?.id || file.managerId || null,
         });
       }
     }
@@ -405,13 +404,11 @@ export const getErrors = async (req: Request, res: Response): Promise<void> => {
     }
 
     const total = allErrors.length;
-    const MAX_ITEMS_PER_TYPE = 10;
     const summary = Object.entries(grouped)
       .map(([type, items]) => ({
         type,
         count: items.length,
         percent: total > 0 ? Math.round((items.length / total) * 100) : 0,
-        items: items.slice(0, MAX_ITEMS_PER_TYPE),
       }))
       .sort((a, b) => b.count - a.count);
 
@@ -430,6 +427,7 @@ export const getErrors = async (req: Request, res: Response): Promise<void> => {
           typeGroups[item.type].push(item);
         }
         return {
+          managerId: items[0]?.managerId ?? null,
           managerName: name,
           total: items.length,
           types: Object.entries(typeGroups)
@@ -437,7 +435,6 @@ export const getErrors = async (req: Request, res: Response): Promise<void> => {
               type,
               count: typeItems.length,
               percent: total > 0 ? Math.round((typeItems.length / total) * 100) : 0,
-              items: typeItems.slice(0, MAX_ITEMS_PER_TYPE),
             }))
             .sort((a, b) => b.count - a.count),
         };
@@ -447,6 +444,51 @@ export const getErrors = async (req: Request, res: Response): Promise<void> => {
     success(res, { total, summary, managerSummary });
   } catch (err) {
     console.error("Dashboard errors error:", err);
+    error(res, "Xatoliklar statistikasini olishda xatolik");
+  }
+};
+
+// GET /dashboard/errors/items — bitta xatolik turi (ixtiyoriy: bitta menejer) bo'yicha item'larni sahifalab qaytarish
+export const getErrorItems = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const where = await buildWhere(req);
+    const type = (req.query.type || "").toString();
+    const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
+    const limitRaw = parseInt(req.query.limit as string, 10);
+    const limit = limitRaw > 0 ? Math.min(limitRaw, 100) : 20;
+
+    const audioFiles = await prisma.audioFile.findMany({
+      where: { ...where, status: "done" },
+      include: {
+        analysis: { select: { errors: true } },
+        manager: { select: { name: true } },
+      },
+      orderBy: [{ callDate: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+    });
+
+    const matched: Array<{
+      type: string; description: string; timestamp: string;
+      managerName: string; audioFileId: string;
+    }> = [];
+
+    for (const file of audioFiles) {
+      const errors = file.analysis?.errors as Array<{ type: string; description: string; timestamp: string }> || [];
+      for (const err of errors) {
+        if (type && normalizeErrorType(err.type) !== type) continue;
+        matched.push({
+          type: normalizeErrorType(err.type),
+          description: err.description || "",
+          timestamp: err.timestamp || "",
+          managerName: file.manager?.name || "Noma'lum",
+          audioFileId: file.id,
+        });
+      }
+    }
+
+    const items = matched.slice(offset, offset + limit);
+    success(res, { items, total: matched.length });
+  } catch (err) {
+    console.error("Dashboard error items error:", err);
     error(res, "Xatoliklar statistikasini olishda xatolik");
   }
 };

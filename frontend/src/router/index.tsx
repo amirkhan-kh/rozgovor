@@ -36,7 +36,6 @@ import ManagerDetailPage from "../pages/managers/ManagerDetailPage";
 import CreateManagerPage from "../pages/managers/CreateManagerPage";
 import EditManagerPage from "../pages/managers/EditManagerPage";
 import PracticePage from "../pages/practice/PracticePage";
-import BenchmarkPage from "../pages/benchmark/BenchmarkPage";
 import RivalsPage from "../pages/rivals/RivalsPage";
 import DesignSystemPage from "../pages/design-system/DesignSystemPage";
 import ScriptsPage from "../pages/scripts/ScriptsPage";
@@ -154,7 +153,6 @@ const AppRouter: React.FC = () => {
           <Route path="managers/:id/edit" element={<EditManagerPage />} />
           <Route path="managers/:id" element={<ManagerDetailPage />} />
           <Route path="practice/:managerId" element={<PracticePage />} />
-          <Route path="benchmark" element={<BenchmarkPage />} />
           <Route path="rivals" element={<RivalsPage />} />
           <Route path="design-system" element={<DesignSystemPage />} />
           <Route path="voronka" element={<VoronkalarPage />} />

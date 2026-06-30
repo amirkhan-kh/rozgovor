@@ -25,6 +25,7 @@ import {
   XCircle,
   ChevronRight,
   ChevronDown,
+  Loader2,
 } from "lucide-react";
 import CustomSelect from "../../components/ui/CustomSelect";
 import ManagerDeptFilterTrigger from "../../components/filters/ManagerDeptFilterTrigger";
@@ -34,6 +35,8 @@ import {
   DashboardFilters,
   CriteriaData,
   ErrorData,
+  ErrorItem,
+  ErrorSummaryEntry,
   ObjectionData,
   WinLossData,
   CallsTrendData,
@@ -554,14 +557,14 @@ const ComparePage: React.FC = () => {
           <CompareGrid>
             {managerA ? (
               <ManagerColumn label={managerAName} color={MANAGER_A_COLOR}>
-                <ErrorsList data={errorsA} />
+                <ErrorsList data={errorsA} filters={filtersA} />
               </ManagerColumn>
             ) : (
               <EmptyPlaceholder text="Menejer A tanlanmagan" />
             )}
             {managerB ? (
               <ManagerColumn label={managerBName} color={MANAGER_B_COLOR}>
-                <ErrorsList data={errorsB} />
+                <ErrorsList data={errorsB} filters={filtersB} />
               </ManagerColumn>
             ) : (
               <EmptyPlaceholder text="Menejer B tanlanmagan" />
@@ -960,24 +963,107 @@ const ObjectionsBlock: React.FC<{ data?: ObjectionData[] }> = ({ data }) => {
 };
 
 /* ---- 7. Errors List ---- */
-const ErrorsList: React.FC<{ data?: ErrorData }> = ({ data }) => {
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+const COMPARE_PAGE_SIZE = 20;
 
+const getErrTitle = (desc: string): string => {
+  const first = desc.split(/[.!?]/)[0];
+  return first.length <= 80 ? first : desc.slice(0, 80) + "...";
+};
+
+// Bitta xatolik turi — ochilganda item'lar talab bo'yicha (20 tadan) yuklanadi
+const CompareErrorType: React.FC<{ entry: ErrorSummaryEntry; filters: DashboardFilters }> = ({ entry, filters }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [items, setItems] = useState<ErrorItem[]>([]);
+  const [total, setTotal] = useState(entry.count);
+  const [loading, setLoading] = useState(false);
+
+  const fetchPage = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const res = await dashboardService.getErrorItems(filters, {
+        type: entry.type,
+        offset: items.length,
+        limit: COMPARE_PAGE_SIZE,
+      });
+      setItems((prev) => [...prev, ...res.items]);
+      setTotal(res.total);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onToggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && items.length === 0) fetchPage();
+  };
+
+  const remaining = Math.max(0, total - items.length);
+
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between py-2.5 px-3 hover:bg-primary/30 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <ChevronRight
+            size={14}
+            className={`text-secondary transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
+          />
+          <span className="text-sm text-white font-medium">
+            {entry.type}{" "}
+            <span className="text-secondary font-normal">({entry.count} ta, {entry.percent}%)</span>
+          </span>
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 space-y-2">
+          {items.map((item, idx) => (
+            <div key={idx} className="p-2.5 bg-primary/30 border border-border rounded-lg">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={13} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-xs text-white font-medium mb-1">{getErrTitle(item.description)}</p>
+                  <p className="text-xs text-secondary leading-relaxed mb-1">{item.description}</p>
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span
+                      onClick={() => window.open(`/audio/${item.audioFileId}/transcription?t=${timeToSeconds(item.timestamp)}`, "_blank")}
+                      className="text-blue-400 hover:underline cursor-pointer"
+                    >
+                      Vaqt: {item.timestamp}
+                    </span>
+                    <span className="text-secondary">Menejer: {item.managerName}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="flex items-center justify-center gap-2 py-2 text-xs text-secondary">
+              <Loader2 size={14} className="animate-spin" />
+              Yuklanmoqda...
+            </div>
+          )}
+          {!loading && remaining > 0 && (
+            <button
+              onClick={fetchPage}
+              className="w-full py-2 rounded-lg text-xs font-medium border border-border text-blue-400 hover:bg-primary/30 transition-colors"
+            >
+              Ko'proq ko'rsatish ({remaining})
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ErrorsList: React.FC<{ data?: ErrorData; filters: DashboardFilters }> = ({ data, filters }) => {
   if (!data || data.total === 0) return <EmptyPlaceholder text="Xatoliklar yo'q" />;
 
-  const toggleSection = (key: string) => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const getTitle = (desc: string): string => {
-    const first = desc.split(/[.!?]/)[0];
-    return first.length <= 80 ? first : desc.slice(0, 80) + "...";
-  };
+  const filtersKey = JSON.stringify(filters);
 
   return (
     <div className="bg-card border border-border rounded-xl p-3 md:p-5">
@@ -986,53 +1072,9 @@ const ErrorsList: React.FC<{ data?: ErrorData }> = ({ data }) => {
       <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
         {data.summary
           .filter((e) => e.count > 0)
-          .map((entry) => {
-            const key = `err-${entry.type}`;
-            const isExpanded = expandedSections.has(key);
-            return (
-              <div key={key} className="border border-border rounded-lg overflow-hidden">
-                <button
-                  onClick={() => toggleSection(key)}
-                  className="w-full flex items-center justify-between py-2.5 px-3 hover:bg-primary/30 transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <ChevronRight
-                      size={14}
-                      className={`text-secondary transition-transform duration-200 ${isExpanded ? "rotate-90" : ""}`}
-                    />
-                    <span className="text-sm text-white font-medium">
-                      {entry.type}{" "}
-                      <span className="text-secondary font-normal">({entry.count} ta, {entry.percent}%)</span>
-                    </span>
-                  </div>
-                </button>
-                {isExpanded && (
-                  <div className="px-3 pb-3 space-y-2">
-                    {entry.items.map((item, idx) => (
-                      <div key={idx} className="p-2.5 bg-primary/30 border border-border rounded-lg">
-                        <div className="flex items-start gap-2">
-                          <AlertTriangle size={13} className="text-amber-500 mt-0.5 flex-shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-xs text-white font-medium mb-1">{getTitle(item.description)}</p>
-                            <p className="text-xs text-secondary leading-relaxed mb-1">{item.description}</p>
-                            <div className="flex items-center gap-3 text-[11px]">
-                              <span
-                                onClick={() => window.open(`/audio/${item.audioFileId}/transcription?t=${timeToSeconds(item.timestamp)}`, "_blank")}
-                                className="text-blue-400 hover:underline cursor-pointer"
-                              >
-                                Vaqt: {item.timestamp}
-                              </span>
-                              <span className="text-secondary">Menejer: {item.managerName}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          .map((entry) => (
+            <CompareErrorType key={`err-${entry.type}-${filtersKey}`} entry={entry} filters={filters} />
+          ))}
       </div>
     </div>
   );

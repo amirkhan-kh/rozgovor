@@ -3,7 +3,11 @@ import { v4 as uuidv4 } from "uuid";
 
 // Yandex Object Storage — barcha audio fayllar uchun storage.
 const YANDEX_ENDPOINT = process.env.YANDEX_STORAGE_ENDPOINT || "https://storage.yandexcloud.net";
-const YANDEX_BUCKET = process.env.YANDEX_BUCKET_AUDIO || "sales-ai-storage";
+// Pipeline qolgani (STT, batch-backfill, lesson-processor) YANDEX_BUCKET'dan o'qiydi.
+// YANDEX_BUCKET_AUDIO o'rnatilmagan bo'lsa shu yagona bucketga (baxtlinikoh) tushishi shart —
+// aks holda fayl boshqa bucketga yuklanadi va prod credlari ruxsat bermay 500 qaytaradi.
+const YANDEX_BUCKET =
+  process.env.YANDEX_BUCKET_AUDIO || process.env.YANDEX_BUCKET || "sales-ai-storage";
 const YANDEX_URL_PREFIX = `${YANDEX_ENDPOINT}/${YANDEX_BUCKET}/`;
 
 const yandexS3 = new AWS.S3({

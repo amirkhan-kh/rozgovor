@@ -5,6 +5,7 @@ import { analyticsService, FunnelStage } from "../../services/analytics.service"
 import SectionHeader from "../../components/ui/stats/SectionHeader";
 import Card from "../../components/ui/Card";
 import LoadingSpinner from "../../components/ui/LoadingSpinner";
+import LeadTransfersSection from "./LeadTransfersSection";
 
 const STAGE_COLORS: Record<string, string> = {
   yangi: "#3b82f6",
@@ -117,6 +118,9 @@ const AnalyticsPage: React.FC = () => {
         </div>
         {rt?.note && <p className="text-xs mt-3" style={{ color: "var(--text-secondary,#64748b)" }}>{rt.note}</p>}
       </Card>
+
+      {/* Lead transfer tarixi (kim → kim) — eng pastki section */}
+      <LeadTransfersSection />
     </div>
   );
 };

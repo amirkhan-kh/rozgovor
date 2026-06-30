@@ -71,6 +71,8 @@ export interface SalesOverview {
     from: string | null;
     to: string | null;
   };
+  // ROZGOVOR: sotuv = to'lov qilgan deal, konversiya cohort-based
+  kpiFromLeads?: boolean;
   kpis: SalesKpis;
   forecast: SalesForecast | null;
   previousKpis: SalesKpis | null;

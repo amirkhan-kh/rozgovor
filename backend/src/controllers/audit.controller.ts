@@ -122,7 +122,16 @@ export const getAuditOverview = async (
     const dateRange = getDateRange(period, dateFrom, dateTo);
 
     const where: Record<string, unknown> = { companyId };
-    if (dateRange) where.createdAt = dateRange;
+    // Davr filtri HAQIQIY qo'ng'iroq vaqti (callDate) bo'yicha — DB'ga sync
+    // qilingan vaqt (createdAt) bo'yicha EMAS. Aks holda bulk-sync hamma yozuvni
+    // bitta kunga jamlab "Bu oy"="Bu hafta" va "Bugun"=0 noto'g'ri chiqarardi.
+    // callDate yo'q (qo'lda yuklangan) yozuvlar uchun createdAt'ga qaytamiz.
+    if (dateRange) {
+      where.OR = [
+        { callDate: dateRange },
+        { callDate: null, createdAt: dateRange },
+      ];
+    }
     if (managerId && managerId !== "all") where.managerId = managerId;
     else if (managerIds.length > 0) where.managerId = { in: managerIds };
     if (pipelines.length > 0) where.pipelineName = { in: pipelines };

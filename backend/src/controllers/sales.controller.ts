@@ -3,6 +3,7 @@ import axios from "axios";
 import { prisma } from "../utils/prisma";
 import { success, error } from "../utils/response";
 import { cache } from "../utils/cache";
+import { BITRIX_WEBHOOK_URL as BITRIX_WEBHOOK } from "../utils/bitrix-config";
 
 // "Sifatli lid" — faqat shu 5 stage'da hisoblanadi (boshqa won/lost stagelar emas).
 // Ochiq stagelar (lead hali yopilmagan):
@@ -18,10 +19,6 @@ const QUALIFYING_CLOSED_STAGES = [
 ];
 const QUALIFYING_ALL_STAGES = [...QUALIFYING_OPEN_STAGES, ...QUALIFYING_CLOSED_STAGES];
 
-
-const BITRIX_WEBHOOK =
-  process.env.BITRIX_WEBHOOK_URL ||
-  "https://psg.bitrix24.uz/rest/21/90iekiqrlfpqkgnu";
 
 async function bitrixCall(
   method: string,
@@ -292,6 +289,62 @@ interface ManagerStats {
   conversionRate: number;      // sotuv / kval × 100
 }
 
+// ─── ROZGOVOR (leadKpiSource="leads") — funnel ta'rifi ──────────────────────
+// Recruitment/training funnel (Bitrix LEAD statuslari):
+//   LID SONI     = davrda yaratilgan barcha Lead
+//   SIFATLI LID  = LID − JUNK ("Sifatsiz lid", statusId="JUNK")
+//   SOTUV        = "100% To'lov" (CONVERTED, isConverted=true) — to'liq to'lagan
+//   TUSHUM       = sotuv (100% To'lov) lidlarining deal narxlari yig'indisi
+//   KONVERSIYA   = sotuv / sifatli lid (100% dan oshmaydi)
+// "Kelishilgan to'lov" = ALOHIDA karta (getKelishilganTolov): deal "Xarid qilingan
+//   kuni" (agreedPaymentDate) to'ldirilganlar — rejalashtirilgan/qisman ham kiradi.
+const LEADS_JUNK_STATUS_ID = "JUNK"; // "Sifatsiz lid"
+// KELISHILGAN TO'LOV (leads-mode) — to'lovga kelishgan lid statuslari:
+//   UC_GBGONA = "3 kun ichida to'lov qiladi", UC_4H12NY = "Kitob sotib olganlar"
+const LEADS_AGREED_STATUS_IDS = ["UC_GBGONA", "UC_4H12NY"];
+const computeLeadsModeKpi = async (
+  leadWhere: Record<string, unknown>,
+  dealFilter: { companyId: string; pipelineIds?: number[] | null }
+): Promise<{
+  leadCount: number;
+  qualifiedLeadCount: number;
+  salesCount: number;
+  totalRevenue: number;
+  conversionRate: number;
+  avgCheck: number;
+}> => {
+  const leadCount = await prisma.lead.count({ where: leadWhere });
+  const junkCount = await prisma.lead.count({
+    where: { ...leadWhere, statusId: LEADS_JUNK_STATUS_ID },
+  });
+  const qualifiedLeadCount = leadCount - junkCount;
+
+  // SOTUV = 100% To'lov (CONVERTED) lidlar.
+  // TUSHUM = shu lidlarning OPPORTUNITY yig'indisi — Bitrix "100% To'lov" kanban
+  // summasi bilan AYNAN mos. (Avvalgi deal-narx usuli deal'i yo'q lidlarni
+  // o'tkazib yuborardi → tushum kam chiqardi: 260mln vs Bitrix 307mln.)
+  const convLeads = await prisma.lead.findMany({
+    where: { ...leadWhere, isConverted: true },
+    select: { opportunity: true },
+  });
+  const salesCount = convLeads.length;
+  const totalRevenue = convLeads.reduce((s, l) => s + (l.opportunity || 0), 0);
+
+  const conversionRate =
+    qualifiedLeadCount > 0
+      ? Math.min(100, (salesCount / qualifiedLeadCount) * 100)
+      : 0;
+  const avgCheck = salesCount > 0 ? totalRevenue / salesCount : 0;
+  return {
+    leadCount,
+    qualifiedLeadCount,
+    salesCount,
+    totalRevenue,
+    conversionRate,
+    avgCheck,
+  };
+};
+
 const computeByManagerMap = async (
   companyId: string,
   dateRange: { gte?: Date; lte?: Date } | null,
@@ -315,41 +368,46 @@ const computeByManagerMap = async (
     return map.get(mId)!;
   };
 
-  // 1) Leadlar (Lead jadvalidan) — leadCount (va "leads" modeli'da kval = isConverted)
+  // 1) Leadlar (Lead jadvalidan)
   const leadWhere: Record<string, unknown> = { companyId };
   if (dateRange) leadWhere.dateCreate = dateRange;
   if (managerIds) leadWhere.responsibleManagerId = { in: managerIds };
   if (sourceIds) leadWhere.sourceId = { in: sourceIds };
   const leads = await prisma.lead.findMany({
     where: leadWhere,
-    select: { responsibleManagerId: true, isConverted: true },
+    select: {
+      responsibleManagerId: true,
+      isConverted: true,
+      statusId: true,
+      bitrixLeadId: true,
+      opportunity: true,
+    },
   });
+  // leads-mode: converted (100% To'lov) lid → menejeri (tushum atributsiyasi)
+  const convLeadManager = new Map<number, string>();
+  const junkByMgr = new Map<string, number>();
   for (const l of leads) {
     const mId = l.responsibleManagerId;
     if (!mId) continue;
     const cur = ensure(mId);
     cur.leadCount += 1;
-    if (kpiFromLeads && l.isConverted) cur.qualifiedLeadCount += 1;
+    if (kpiFromLeads) {
+      if (l.statusId === LEADS_JUNK_STATUS_ID) {
+        junkByMgr.set(mId, (junkByMgr.get(mId) || 0) + 1);
+      }
+      if (l.isConverted) {
+        cur.salesCount += 1; // SOTUV = 100% To'lov
+        cur.revenue += l.opportunity || 0; // TUSHUM = lid OPPORTUNITY (Bitrix bilan mos)
+        if (l.bitrixLeadId != null) convLeadManager.set(l.bitrixLeadId, mId);
+      }
+    }
   }
 
   if (kpiFromLeads) {
-    // "leads" modeli: kval yuqorida (isConverted) sanaldi. Sotuv = SalesLead isSale
-    // (won) — yopilgan stage NAME'iga bog'liq emas (instans-agnostik).
-    const wonW: Record<string, unknown> = { companyId, isSale: true };
-    if (dateRange) wonW.closedAt = dateRange;
-    if (pipelineIds) wonW.pipelineId = { in: pipelineIds };
-    if (managerIds) wonW.responsibleManagerId = { in: managerIds };
-    if (bitrixLeadIdsFromSources) wonW.originalLeadId = { in: bitrixLeadIdsFromSources };
-    const wonDeals = await prisma.salesLead.findMany({
-      where: wonW,
-      select: { responsibleManagerId: true, price: true },
-    });
-    for (const d of wonDeals) {
-      const mId = d.responsibleManagerId;
-      if (!mId) continue;
-      const cur = ensure(mId);
-      cur.salesCount += 1;
-      cur.revenue += cleanPrice(d.price);
+    // SIFATLI LID = lid − junk (har menejer). TUSHUM yuqorida loop'da
+    // converted lid OPPORTUNITY'sidan yig'ilgan (Bitrix "100% To'lov" bilan mos).
+    for (const [mId, cur] of map) {
+      cur.qualifiedLeadCount = cur.leadCount - (junkByMgr.get(mId) || 0);
     }
   } else {
     // "deals" modeli (ProSales) — kval + sotuv yopilgan/ochiq qualifying stagelardan
@@ -436,10 +494,13 @@ const computeByManagerMap = async (
     }
   }
 
-  // 3) Konversiya = sotuv / qual lid × 100 (yakunlangan dealar ichida won foizi)
+  // 3) Konversiya = sotuv / qual lid × 100 (100% dan oshmaydi — to'lov modeli'da
+  //    deal-menejer va lid-menejer reassignment tufayli farq qilishi mumkin).
   for (const [, v] of map) {
     v.conversionRate =
-      v.qualifiedLeadCount > 0 ? (v.salesCount / v.qualifiedLeadCount) * 100 : 0;
+      v.qualifiedLeadCount > 0
+        ? Math.min(100, (v.salesCount / v.qualifiedLeadCount) * 100)
+        : 0;
     v.conversionRate = Math.round(v.conversionRate * 10) / 10;
   }
 
@@ -464,20 +525,31 @@ const computePeriodKpis = async (
   bitrixLeadIdsFromSources: number[] | null = null,
   kpiFromLeads = false
 ) => {
-  let leadCount: number;
-  let qualifiedLeadCount: number;
+  // ROZGOVOR leads-mode — yangi funnel (sifatli=lid−junk, sotuv=100%To'lov)
   if (kpiFromLeads) {
-    // "leads" modeli — Lid = barcha Lead, Kval = Lead.isConverted.
     const leadW: Record<string, unknown> = { companyId };
     if (dateRange) leadW.dateCreate = dateRange;
     if (managerIds) leadW.responsibleManagerId = { in: managerIds };
     if (sourceIds) leadW.sourceId = { in: sourceIds };
     if (leadIdsFromPipelines) leadW.bitrixLeadId = { in: leadIdsFromPipelines };
-    leadCount = await prisma.lead.count({ where: leadW });
-    qualifiedLeadCount = await prisma.lead.count({
-      where: { ...leadW, isConverted: true },
-    });
-  } else {
+    const k = await computeLeadsModeKpi(leadW, { companyId, pipelineIds });
+    const qRate = k.leadCount > 0 ? (k.qualifiedLeadCount / k.leadCount) * 100 : 0;
+    return {
+      leadCount: k.leadCount,
+      qualifiedLeadCount: k.qualifiedLeadCount,
+      qualifiedLeadRate: Math.round(qRate * 10) / 10,
+      salesCount: k.salesCount,
+      totalRevenue: k.totalRevenue,
+      avgCheck: Math.round(k.avgCheck),
+      conversionRate: Math.round(k.conversionRate * 10) / 10,
+      partialPaymentCount: 0,
+      partialPaymentRevenue: 0,
+    };
+  }
+
+  let leadCount: number;
+  let qualifiedLeadCount: number;
+  {
     // "deals" modeli — Lid = davrda yaratilgan barcha SalesLead (har qanday stage)
     const allLeadsW: Record<string, unknown> = { companyId };
     if (dateRange) allLeadsW.leadCreatedAt = dateRange;
@@ -517,49 +589,53 @@ const computePeriodKpis = async (
   const qualifiedLeadRate =
     leadCount > 0 ? (qualifiedLeadCount / leadCount) * 100 : 0;
 
-  // Sotuvlar (davrda yopilgan won deallar + isPartialPayment true bo'lganlari)
-  // Won — closedAt davr ichida
-  const wonWhere: Record<string, unknown> = { companyId, isSale: true };
-  if (dateRange) wonWhere.closedAt = dateRange;
-  if (pipelineIds) wonWhere.pipelineId = { in: pipelineIds };
-  if (managerIds) wonWhere.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    wonWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+  let salesCount: number;
+  let totalRevenue: number;
+  let conversionRate: number;
+  {
+    // Sotuvlar (davrda yopilgan won deallar + isPartialPayment true bo'lganlari)
+    // Won — closedAt davr ichida
+    const wonWhere: Record<string, unknown> = { companyId, isSale: true };
+    if (dateRange) wonWhere.closedAt = dateRange;
+    if (pipelineIds) wonWhere.pipelineId = { in: pipelineIds };
+    if (managerIds) wonWhere.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      wonWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    const wonRows = await prisma.salesLead.findMany({
+      where: wonWhere,
+      select: { price: true, leadId: true },
+    });
+    // Partial payment — faqat ochiq/ketayotgan (won va lost allaqachon sanalgan)
+    // closedAt bo'lmasa leadCreatedAt bo'yicha davr
+    const partialWhere: Record<string, unknown> = {
+      companyId,
+      isPartialPayment: true,
+      semanticId: { notIn: ["S", "F"] },
+    };
+    if (dateRange) partialWhere.leadCreatedAt = dateRange;
+    if (pipelineIds) partialWhere.pipelineId = { in: pipelineIds };
+    if (managerIds) partialWhere.responsibleManagerId = { in: managerIds };
+    if (bitrixLeadIdsFromSources) {
+      partialWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+    }
+    const partialRows = await prisma.salesLead.findMany({
+      where: partialWhere,
+      select: { price: true, leadId: true },
+    });
+    // Dedup (id set)
+    const ids = new Set<number>();
+    const combined: Array<{ price: number }> = [];
+    for (const r of [...wonRows, ...partialRows]) {
+      if (ids.has(r.leadId)) continue;
+      ids.add(r.leadId);
+      combined.push({ price: cleanPrice(r.price) });
+    }
+    salesCount = combined.length;
+    totalRevenue = combined.reduce((s, r) => s + r.price, 0);
+    conversionRate =
+      qualifiedLeadCount > 0 ? (salesCount / qualifiedLeadCount) * 100 : 0;
   }
-  const wonRows = await prisma.salesLead.findMany({
-    where: wonWhere,
-    select: { price: true, leadId: true },
-  });
-  // Partial payment — faqat ochiq/ketayotgan (won va lost allaqachon sanalgan)
-  // closedAt bo'lmasa leadCreatedAt bo'yicha davr
-  const partialWhere: Record<string, unknown> = {
-    companyId,
-    isPartialPayment: true,
-    semanticId: { notIn: ["S", "F"] },
-  };
-  if (dateRange) partialWhere.leadCreatedAt = dateRange;
-  if (pipelineIds) partialWhere.pipelineId = { in: pipelineIds };
-  if (managerIds) partialWhere.responsibleManagerId = { in: managerIds };
-  if (bitrixLeadIdsFromSources) {
-    partialWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
-  }
-  const partialRows = await prisma.salesLead.findMany({
-    where: partialWhere,
-    select: { price: true, leadId: true },
-  });
-  // Dedup (id set)
-  const ids = new Set<number>();
-  const combined: Array<{ price: number }> = [];
-  for (const r of [...wonRows, ...partialRows]) {
-    if (ids.has(r.leadId)) continue;
-    ids.add(r.leadId);
-    combined.push({ price: cleanPrice(r.price) });
-  }
-  const salesCount = combined.length;
-  const totalRevenue = combined.reduce((s, r) => s + r.price, 0);
-
-  const conversionRate =
-    qualifiedLeadCount > 0 ? (salesCount / qualifiedLeadCount) * 100 : 0;
   const avgCheck = salesCount > 0 ? totalRevenue / salesCount : 0;
 
   // Qisman to'lov — closed + open, leadId bo'yicha dedup
@@ -708,18 +784,20 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         isConverted: true,
         dateCreate: true,
         responsibleManagerId: true,
+        statusId: true,
+        opportunity: true,
       },
     });
-    // ─── Lid soni + Kval lid ──────────────────────────────────────────
+    // ─── Lid soni + Sifatli lid ───────────────────────────────────────
     let leadCount: number;
     let qualifiedLeadCount: number;
     if (kpiFromLeads) {
-      // "leads" modeli — Lid = barcha Lead, Kval = Lead.isConverted (leadWhere
-      // allaqachon companyId/davr/manager/source/pipeline filtrlarini saqlaydi).
+      // LID = barcha Lead; SIFATLI LID = LID − JUNK ("Sifatsiz lid")
       leadCount = await prisma.lead.count({ where: leadWhere });
-      qualifiedLeadCount = await prisma.lead.count({
-        where: { ...leadWhere, isConverted: true },
+      const junkCount = await prisma.lead.count({
+        where: { ...leadWhere, statusId: LEADS_JUNK_STATUS_ID },
       });
+      qualifiedLeadCount = leadCount - junkCount;
     } else {
       // "deals" modeli — Lid = davrda yaratilgan barcha SalesLead (har qanday stage)
       const allLeadsWOv: Record<string, unknown> = { companyId };
@@ -761,65 +839,105 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
     const qualifiedLeadRate =
       leadCount > 0 ? (qualifiedLeadCount / leadCount) * 100 : 0;
 
-    // SALES — SalesLead (deal) jadvalidan, davrda yopilgan won + qisman to'lovlar
-    const salesWhere: Record<string, unknown> = { companyId, isSale: true };
-    if (dateRange) salesWhere.closedAt = dateRange;
-    if (pipelineIds) salesWhere.pipelineId = { in: pipelineIds };
-    if (managerIds) salesWhere.responsibleManagerId = { in: managerIds };
-    if (bitrixLeadIdsFromSources) {
-      salesWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+    // SALES — to'lov modeli (ROZGOVOR: agreedPaymentDate) yoki won+partial (ProSales)
+    const saleSelect = {
+      leadId: true,
+      price: true,
+      closedAt: true,
+      leadCreatedAt: true,
+      originalLeadId: true,
+      responsibleManagerId: true,
+    } as const;
+    let saleRows: Array<{
+      leadId: number;
+      price: number | null;
+      closedAt: Date | null;
+      leadCreatedAt: Date | null;
+      originalLeadId: number | null;
+      responsibleManagerId: string | null;
+    }>;
+    let salesCount: number;
+    let totalRevenue: number;
+    let conversionRate: number;
+
+    if (kpiFromLeads) {
+      // SOTUV = 100% To'lov (CONVERTED) lidlar
+      const convBitrixIds = leadRows
+        .filter((r) => r.isConverted)
+        .map((r) => r.bitrixLeadId)
+        .filter((n): n is number => n != null);
+      salesCount = convBitrixIds.length;
+      // TUSHUM + saleRows = sotuv lidlarining deallari (lead bo'yicha dedup)
+      saleRows = [];
+      if (convBitrixIds.length > 0) {
+        const dealW: Record<string, unknown> = {
+          companyId,
+          originalLeadId: { in: convBitrixIds },
+        };
+        if (pipelineIds) dealW.pipelineId = { in: pipelineIds };
+        const convDeals = await prisma.salesLead.findMany({
+          where: dealW,
+          select: saleSelect,
+        });
+        const seen = new Set<number>();
+        for (const d of convDeals) {
+          if (d.originalLeadId == null || seen.has(d.originalLeadId)) continue;
+          seen.add(d.originalLeadId);
+          saleRows.push(d);
+        }
+      }
+      // TUSHUM = converted lidlarning OPPORTUNITY yig'indisi — Bitrix "100% To'lov"
+      // kanban summasi bilan AYNAN mos. (Deal-narx usuli deal-yo'q lidlarni
+      // o'tkazib yuborardi → kam chiqardi: 252mln vs Bitrix 320mln.)
+      totalRevenue = leadRows
+        .filter((r) => r.isConverted)
+        .reduce((sum, r) => sum + (r.opportunity || 0), 0);
+      conversionRate =
+        qualifiedLeadCount > 0
+          ? Math.min(100, (salesCount / qualifiedLeadCount) * 100)
+          : 0;
+    } else {
+      const salesWhere: Record<string, unknown> = { companyId, isSale: true };
+      if (dateRange) salesWhere.closedAt = dateRange;
+      if (pipelineIds) salesWhere.pipelineId = { in: pipelineIds };
+      if (managerIds) salesWhere.responsibleManagerId = { in: managerIds };
+      if (bitrixLeadIdsFromSources) {
+        salesWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+      }
+      const wonSaleRows = await prisma.salesLead.findMany({
+        where: salesWhere,
+        select: saleSelect,
+      });
+      // Qisman to'lov — ochiq (notIn S/F) va davr ichida yaratilgan
+      const partialSaleWhere: Record<string, unknown> = {
+        companyId,
+        isPartialPayment: true,
+        semanticId: { notIn: ["S", "F"] },
+      };
+      if (dateRange) partialSaleWhere.leadCreatedAt = dateRange;
+      if (pipelineIds) partialSaleWhere.pipelineId = { in: pipelineIds };
+      if (managerIds) partialSaleWhere.responsibleManagerId = { in: managerIds };
+      if (bitrixLeadIdsFromSources) {
+        partialSaleWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
+      }
+      const partialSaleRows = await prisma.salesLead.findMany({
+        where: partialSaleWhere,
+        select: saleSelect,
+      });
+      // Dedup won + partial
+      const saleIds = new Set<number>();
+      saleRows = [];
+      for (const r of [...wonSaleRows, ...partialSaleRows]) {
+        if (saleIds.has(r.leadId)) continue;
+        saleIds.add(r.leadId);
+        saleRows.push(r);
+      }
+      salesCount = saleRows.length;
+      totalRevenue = saleRows.reduce((sum, r) => sum + cleanPrice(r.price), 0);
+      // Konversiya = sotuv / qual lid × 100 (yakunlangan dealar ichida won foizi)
+      conversionRate =
+        qualifiedLeadCount > 0 ? (salesCount / qualifiedLeadCount) * 100 : 0;
     }
-
-    const wonSaleRows = await prisma.salesLead.findMany({
-      where: salesWhere,
-      select: {
-        leadId: true,
-        price: true,
-        closedAt: true,
-        leadCreatedAt: true,
-        originalLeadId: true,
-        responsibleManagerId: true,
-      },
-    });
-
-    // Qisman to'lov — ochiq (notIn S/F) va davr ichida yaratilgan
-    const partialSaleWhere: Record<string, unknown> = {
-      companyId,
-      isPartialPayment: true,
-      semanticId: { notIn: ["S", "F"] },
-    };
-    if (dateRange) partialSaleWhere.leadCreatedAt = dateRange;
-    if (pipelineIds) partialSaleWhere.pipelineId = { in: pipelineIds };
-    if (managerIds) partialSaleWhere.responsibleManagerId = { in: managerIds };
-    if (bitrixLeadIdsFromSources) {
-      partialSaleWhere.originalLeadId = { in: bitrixLeadIdsFromSources };
-    }
-    const partialSaleRows = await prisma.salesLead.findMany({
-      where: partialSaleWhere,
-      select: {
-        leadId: true,
-        price: true,
-        closedAt: true,
-        leadCreatedAt: true,
-        originalLeadId: true,
-        responsibleManagerId: true,
-      },
-    });
-
-    // Dedup won + partial
-    const saleIds = new Set<number>();
-    const saleRows: typeof wonSaleRows = [];
-    for (const r of [...wonSaleRows, ...partialSaleRows]) {
-      if (saleIds.has(r.leadId)) continue;
-      saleIds.add(r.leadId);
-      saleRows.push(r);
-    }
-    const salesCount = saleRows.length;
-    const totalRevenue = saleRows.reduce((sum, r) => sum + cleanPrice(r.price), 0);
-
-    // Konversiya = sotuv / qual lid × 100 (yakunlangan dealar ichida won foizi)
-    const conversionRate =
-      qualifiedLeadCount > 0 ? (salesCount / qualifiedLeadCount) * 100 : 0;
     // O'rtacha chek
     const avgCheck = salesCount > 0 ? totalRevenue / salesCount : 0;
 
@@ -986,7 +1104,56 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       sampleCount: cycleDays.length,
     };
 
-    // ─── TIME TO CONTACT: leadCreatedAt → firstContactAt (shu davrda yaratilgan lidlar) ─
+    // ─── TIME TO CONTACT: lid yaratilgandan birinchi aloqagacha ─
+    let timeToContact: {
+      avgHours: number;
+      totalLeadsCount: number;
+      contactedLeadsCount: number;
+    };
+    if (kpiFromLeads) {
+      // ROZGOVOR — Lead.clientPhone ↔ AudioFile.phoneNumber bo'yicha birinchi qo'ng'iroq
+      const normPhone = (s: string | null) =>
+        (s || "").replace(/\D/g, "").replace(/^998/, "").slice(-9);
+      const leadsForContact = await prisma.lead.findMany({
+        where: dateRange ? { companyId, dateCreate: dateRange } : { companyId },
+        select: { clientPhone: true, dateCreate: true },
+      });
+      const leadCreatedByPhone = new Map<string, Date>();
+      for (const l of leadsForContact) {
+        const k = normPhone(l.clientPhone);
+        if (k.length >= 7) {
+          const prev = leadCreatedByPhone.get(k);
+          if (!prev || l.dateCreate < prev) leadCreatedByPhone.set(k, l.dateCreate);
+        }
+      }
+      const contactAudiosLm = await prisma.audioFile.findMany({
+        where: { companyId, callDate: { not: null } },
+        select: { phoneNumber: true, callDate: true },
+      });
+      const firstCallByPhone = new Map<string, Date>();
+      for (const a of contactAudiosLm) {
+        const k = normPhone(a.phoneNumber);
+        if (!k || !a.callDate || !leadCreatedByPhone.has(k)) continue;
+        const prev = firstCallByPhone.get(k);
+        if (!prev || a.callDate < prev) firstCallByPhone.set(k, a.callDate);
+      }
+      const gapsLm: number[] = [];
+      for (const [k, call] of firstCallByPhone) {
+        const created = leadCreatedByPhone.get(k)!;
+        const diff = call.getTime() - created.getTime();
+        if (diff >= 0) gapsLm.push(diff / 3_600_000);
+      }
+      timeToContact = {
+        avgHours:
+          gapsLm.length > 0
+            ? Math.round(
+                (gapsLm.reduce((a, b) => a + b, 0) / gapsLm.length) * 10
+              ) / 10
+            : 0,
+        totalLeadsCount: leadCount,
+        contactedLeadsCount: gapsLm.length,
+      };
+    } else {
     // SalesLead'dan olamiz — UI'dagi "Lid soni" shu jadvalga mos
     const salesLeadsForContactWhere: any = { companyId };
     if (dateRange) salesLeadsForContactWhere.leadCreatedAt = dateRange;
@@ -1052,13 +1219,14 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       const diffMs = v.first.getTime() - v.created.getTime();
       if (diffMs >= 0) contactGapsHrs.push(diffMs / 3_600_000);
     }
-    const timeToContact = {
+    timeToContact = {
       avgHours: contactGapsHrs.length > 0
         ? Math.round((contactGapsHrs.reduce((a, b) => a + b, 0) / contactGapsHrs.length) * 10) / 10
         : 0,
       totalLeadsCount: leadCount,
       contactedLeadsCount: firstContactByLead.size,
     };
+    }
 
     // ─── 4) MENEJERLAR BO'YICHA — joriy va oldingi davr ───
     const prevRange = getPreviousRange(period, dateRange);
@@ -1193,6 +1361,8 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         from: dateRange?.gte?.toISOString() || null,
         to: dateRange?.lte?.toISOString() || null,
       },
+      // ROZGOVOR: sotuv = to'lov qilgan deal, konversiya cohort-based (frontend label uchun)
+      kpiFromLeads,
       kpis: {
         leadCount,
         qualifiedLeadCount,
@@ -1329,83 +1499,128 @@ export const getManagersSales = async (
     if (sourceIds) leadWhere.sourceId = { in: sourceIds };
     const leads = await prisma.lead.findMany({
       where: leadWhere,
-      select: { responsibleManagerId: true, isConverted: true },
-    });
-
-    // Sotuvlar (closed won)
-    const saleWhere: Record<string, unknown> = {
-      companyId,
-      isSale: true,
-    };
-    if (dateRange) saleWhere.closedAt = dateRange;
-    if (pipelineIds) saleWhere.pipelineId = { in: pipelineIds };
-    if (managerFilterIds) saleWhere.responsibleManagerId = { in: managerFilterIds };
-    if (bitrixLeadIdsFromSources) {
-      saleWhere.originalLeadId =
-        bitrixLeadIdsFromSources.length > 0
-          ? { in: bitrixLeadIdsFromSources }
-          : { in: [-1] };
-    }
-    const wonSales = await prisma.salesLead.findMany({
-      where: saleWhere,
       select: {
         responsibleManagerId: true,
-        price: true,
-        closedAt: true,
-        leadId: true,
+        isConverted: true,
+        statusId: true,
+        bitrixLeadId: true,
+        opportunity: true,
       },
     });
 
-    // Qisman to'lov — ochiq (won/lost emas)
-    const partialsWhere: Record<string, unknown> = {
-      companyId,
-      isPartialPayment: true,
-      semanticId: { notIn: ["S", "F"] },
-    };
-    if (dateRange) partialsWhere.leadCreatedAt = dateRange;
-    if (pipelineIds) partialsWhere.pipelineId = { in: pipelineIds };
-    if (managerFilterIds)
-      partialsWhere.responsibleManagerId = { in: managerFilterIds };
-    if (bitrixLeadIdsFromSources) {
-      partialsWhere.originalLeadId =
-        bitrixLeadIdsFromSources.length > 0
-          ? { in: bitrixLeadIdsFromSources }
-          : { in: [-1] };
-    }
-    const partialSales = await prisma.salesLead.findMany({
-      where: partialsWhere,
-      select: {
-        responsibleManagerId: true,
-        price: true,
-        leadCreatedAt: true,
-        leadId: true,
-      },
-    });
-
-    // Dedup
-    const saleIdSet = new Set<number>();
+    // Sotuvlar — leads-mode: 100% To'lov lidlarning deallari; ProSales: won+partial
     const sales: Array<{
       responsibleManagerId: string | null;
       price: number | null;
       closedAt: Date | null;
     }> = [];
-    for (const r of wonSales) {
-      if (saleIdSet.has(r.leadId)) continue;
-      saleIdSet.add(r.leadId);
-      sales.push({
-        responsibleManagerId: r.responsibleManagerId,
-        price: r.price,
-        closedAt: r.closedAt,
+    if (kpiFromLeads) {
+      // SOTUV = 100% To'lov (CONVERTED) lidlar; tushum = ularning deal narxlari,
+      // sotuv lidining menejeriga atributsiya (salesCount esa lidlardan sanaladi).
+      const convLeadMgr = new Map<number, string>();
+      for (const l of leads) {
+        if (l.isConverted && l.bitrixLeadId != null && l.responsibleManagerId) {
+          convLeadMgr.set(l.bitrixLeadId, l.responsibleManagerId);
+        }
+      }
+      const convIds = [...convLeadMgr.keys()];
+      if (convIds.length > 0) {
+        const dealW: Record<string, unknown> = {
+          companyId,
+          originalLeadId: { in: convIds },
+        };
+        if (pipelineIds) dealW.pipelineId = { in: pipelineIds };
+        const convDeals = await prisma.salesLead.findMany({
+          where: dealW,
+          select: {
+            originalLeadId: true,
+            price: true,
+            agreedPaymentDate: true,
+            closedAt: true,
+          },
+        });
+        const seen = new Set<number>();
+        for (const d of convDeals) {
+          if (d.originalLeadId == null || seen.has(d.originalLeadId)) continue;
+          seen.add(d.originalLeadId);
+          sales.push({
+            responsibleManagerId: convLeadMgr.get(d.originalLeadId) || null,
+            price: d.price,
+            closedAt: d.agreedPaymentDate || d.closedAt,
+          });
+        }
+      }
+    } else {
+      // Sotuvlar (closed won)
+      const saleWhere: Record<string, unknown> = {
+        companyId,
+        isSale: true,
+      };
+      if (dateRange) saleWhere.closedAt = dateRange;
+      if (pipelineIds) saleWhere.pipelineId = { in: pipelineIds };
+      if (managerFilterIds) saleWhere.responsibleManagerId = { in: managerFilterIds };
+      if (bitrixLeadIdsFromSources) {
+        saleWhere.originalLeadId =
+          bitrixLeadIdsFromSources.length > 0
+            ? { in: bitrixLeadIdsFromSources }
+            : { in: [-1] };
+      }
+      const wonSales = await prisma.salesLead.findMany({
+        where: saleWhere,
+        select: {
+          responsibleManagerId: true,
+          price: true,
+          closedAt: true,
+          leadId: true,
+        },
       });
-    }
-    for (const r of partialSales) {
-      if (saleIdSet.has(r.leadId)) continue;
-      saleIdSet.add(r.leadId);
-      sales.push({
-        responsibleManagerId: r.responsibleManagerId,
-        price: r.price,
-        closedAt: r.leadCreatedAt, // ochiq partial — closedAt yo'q, sparkline'da leadCreatedAt ishlatamiz
+
+      // Qisman to'lov — ochiq (won/lost emas)
+      const partialsWhere: Record<string, unknown> = {
+        companyId,
+        isPartialPayment: true,
+        semanticId: { notIn: ["S", "F"] },
+      };
+      if (dateRange) partialsWhere.leadCreatedAt = dateRange;
+      if (pipelineIds) partialsWhere.pipelineId = { in: pipelineIds };
+      if (managerFilterIds)
+        partialsWhere.responsibleManagerId = { in: managerFilterIds };
+      if (bitrixLeadIdsFromSources) {
+        partialsWhere.originalLeadId =
+          bitrixLeadIdsFromSources.length > 0
+            ? { in: bitrixLeadIdsFromSources }
+            : { in: [-1] };
+      }
+      const partialSales = await prisma.salesLead.findMany({
+        where: partialsWhere,
+        select: {
+          responsibleManagerId: true,
+          price: true,
+          leadCreatedAt: true,
+          leadId: true,
+        },
       });
+
+      // Dedup
+      const saleIdSet = new Set<number>();
+      for (const r of wonSales) {
+        if (saleIdSet.has(r.leadId)) continue;
+        saleIdSet.add(r.leadId);
+        sales.push({
+          responsibleManagerId: r.responsibleManagerId,
+          price: r.price,
+          closedAt: r.closedAt,
+        });
+      }
+      for (const r of partialSales) {
+        if (saleIdSet.has(r.leadId)) continue;
+        saleIdSet.add(r.leadId);
+        sales.push({
+          responsibleManagerId: r.responsibleManagerId,
+          price: r.price,
+          closedAt: r.leadCreatedAt, // ochiq partial — closedAt yo'q, sparkline'da leadCreatedAt ishlatamiz
+        });
+      }
     }
 
     // Davrda yopilgan BARCHA deallar (won + lost) — konversiya uchun denominator
@@ -1472,18 +1687,42 @@ export const getManagersSales = async (
       return v;
     };
 
+    const junkByMgr = new Map<string, number>();
     for (const l of leads) {
       if (!l.responsibleManagerId) continue;
       const cur = ensure(l.responsibleManagerId);
       cur.leadCount += 1;
-      if (l.isConverted) cur.qualifiedLeadCount += 1;
+      if (kpiFromLeads) {
+        if (l.statusId === LEADS_JUNK_STATUS_ID) {
+          junkByMgr.set(
+            l.responsibleManagerId,
+            (junkByMgr.get(l.responsibleManagerId) || 0) + 1
+          );
+        }
+        if (l.isConverted) {
+          cur.salesCount += 1; // SOTUV = 100% To'lov
+          cur.revenue += l.opportunity || 0; // TUSHUM = lid OPPORTUNITY (Bitrix bilan mos)
+        }
+      } else if (l.isConverted) {
+        cur.qualifiedLeadCount += 1;
+      }
+    }
+    // leads-mode: SIFATLI LID = lid − junk
+    if (kpiFromLeads) {
+      for (const [mId, cur] of agg) {
+        cur.qualifiedLeadCount = cur.leadCount - (junkByMgr.get(mId) || 0);
+      }
     }
 
     for (const s of sales) {
       if (!s.responsibleManagerId) continue;
       const cur = ensure(s.responsibleManagerId);
-      cur.salesCount += 1;
-      cur.revenue += s.price || 0;
+      // leads-mode: salesCount lidlardan, revenue lid OPPORTUNITY'dan (yuqorida).
+      // sales faqat sparkline uchun. ProSales: deal narxi.
+      if (!kpiFromLeads) {
+        cur.salesCount += 1;
+        cur.revenue += s.price || 0;
+      }
       if (s.closedAt) {
         const key = s.closedAt.toISOString().slice(0, 10);
         if (cur.sparkline.has(key)) {
@@ -1499,7 +1738,10 @@ export const getManagersSales = async (
     }
 
     // Overall score: konversiya (50%) + share of total revenue (50%), 0–100
-    const totalRevenue = sales.reduce((s, r) => s + cleanPrice(r.price), 0);
+    // leads-mode: TUSHUM = lid OPPORTUNITY (agg.revenue); ProSales: deal narxi.
+    const totalRevenue = kpiFromLeads
+      ? [...agg.values()].reduce((s, a) => s + a.revenue, 0)
+      : sales.reduce((s, r) => s + cleanPrice(r.price), 0);
     const rows = managers
       .map((m) => {
         // Barcha aktiv menejer ko'rinsin — aktivligi yo'qlar nol bilan.
@@ -1517,7 +1759,9 @@ export const getManagersSales = async (
         // Konv = sotuv / qual lid (har doim 0-100%).
         const qualForCard = kpiFromLeads ? a.qualifiedLeadCount : a.closedTotal;
         const conversion =
-          qualForCard > 0 ? (a.salesCount / qualForCard) * 100 : 0;
+          qualForCard > 0
+            ? Math.min(100, (a.salesCount / qualForCard) * 100)
+            : 0;
         const revenueShare = totalRevenue > 0 ? (a.revenue / totalRevenue) * 100 : 0;
         const overallScore = Math.round(
           Math.min(100, conversion * 0.5 + revenueShare * 2.5)
@@ -2114,6 +2358,58 @@ export const getKelishilganTolov = async (
       ? await resolveBitrixLeadIdsForSources(companyId, sourceIds)
       : null;
 
+    const companyKpi = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { leadKpiSource: true },
+    });
+    const kpiFromLeads = companyKpi?.leadKpiSource === "leads";
+
+    const periodOut = {
+      key: period,
+      from: dateRange?.gte?.toISOString() || null,
+      to: dateRange?.lte?.toISOString() || null,
+    };
+
+    if (kpiFromLeads) {
+      // ROZGOVOR — KELISHILGAN TO'LOV = "3 kun ichida to'lov qiladi" +
+      // "Kitob sotib olganlar" statusidagi lidlar (to'lovga kelishganlar).
+      const leadW: Record<string, unknown> = {
+        companyId,
+        statusId: { in: LEADS_AGREED_STATUS_IDS },
+      };
+      if (dateRange) leadW.dateCreate = dateRange;
+      if (managerIds) leadW.responsibleManagerId = { in: managerIds };
+      if (sourceIds) leadW.sourceId = { in: sourceIds };
+      const leads = await prisma.lead.findMany({
+        where: leadW,
+        select: {
+          bitrixLeadId: true,
+          statusName: true,
+          opportunity: true,
+          dateCreate: true,
+          responsibleManagerId: true,
+          manager: { select: { name: true } },
+        },
+        orderBy: { dateCreate: "asc" },
+        take: 500,
+      });
+      const amount = leads.reduce((sum, l) => sum + cleanPrice(l.opportunity), 0);
+      success(res, {
+        count: leads.length,
+        amount,
+        period: periodOut,
+        deals: leads.map((l) => ({
+          id: String(l.bitrixLeadId ?? ""),
+          title: l.statusName || `Lead #${l.bitrixLeadId}`,
+          agreedPaymentDate: l.dateCreate,
+          price: l.opportunity,
+          pipelineName: null,
+          manager: l.manager?.name || null,
+        })),
+      });
+      return;
+    }
+
     const where: Record<string, unknown> = {
       companyId,
       agreedPaymentDate: { not: null },
@@ -2145,11 +2441,7 @@ export const getKelishilganTolov = async (
     success(res, {
       count: deals.length,
       amount,
-      period: {
-        key: period,
-        from: dateRange?.gte?.toISOString() || null,
-        to: dateRange?.lte?.toISOString() || null,
-      },
+      period: periodOut,
       deals: deals.map((d) => ({
         id: String(d.leadId ?? ""),
         title: d.statusName || `Deal #${d.leadId}`,

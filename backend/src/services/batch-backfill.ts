@@ -607,7 +607,7 @@ Return JSON with "audioId" and "segments" array.`;
         ],
         generationConfig: {
           temperature: 0,
-          maxOutputTokens: 32768, // Uzun audiolar (20+ daq) uchun katta limit
+          maxOutputTokens: 65536, // Uzun audiolar (10 soatgacha) uchun model maksimumi (Gemini 2.5 Flash)
           responseMimeType: "application/json",
         },
       },
@@ -782,6 +782,11 @@ Return JSON with "audioId" and "segments" array.`;
         audios[lineIdx]?.id ||
         null;
       if (!audioId) continue;
+
+      // Uzun audio truncation ogohlantirishi (jim kesilmasligi uchun)
+      if (parsed.response?.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+        console.warn(`[Stage 2] Diarization MAX_TOKENS (${audioId}) — uzun audio, transkript qisqargan bo'lishi mumkin`);
+      }
 
       // Cost tracking — Flash batch
       const usage = parsed.response?.usageMetadata;
@@ -988,7 +993,7 @@ export async function runStage3_ProBatch(
           systemInstruction: { parts: [{ text: systemInstruction }] },
           generationConfig: {
             temperature: 0,
-            maxOutputTokens: 32768,
+            maxOutputTokens: 65536,
             responseMimeType: "application/json",
             responseSchema,
           },
@@ -1010,7 +1015,7 @@ export async function runStage3_ProBatch(
           systemInstruction: { parts: [{ text: V1_SYSTEM_INSTRUCTION }] },
           generationConfig: {
             temperature: 0,
-            maxOutputTokens: 32768,
+            maxOutputTokens: 65536,
             responseMimeType: "application/json",
           },
         },
@@ -1116,6 +1121,11 @@ export async function runStage3_ProBatch(
         audios[lineIdx]?.id ||
         null;
       if (!audioId) continue;
+
+      // Uzun transkript truncation ogohlantirishi
+      if (parsed.response?.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+        console.warn(`[Stage 3] Analysis MAX_TOKENS (${audioId}) — uzun transkript, natija qisqargan bo'lishi mumkin`);
+      }
 
       // Cost tracking — Pro batch
       const usage = parsed.response?.usageMetadata;

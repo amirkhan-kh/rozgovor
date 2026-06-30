@@ -136,7 +136,9 @@ const SpeechRatioBlock: React.FC<SpeechRatioBlockProps> = ({ data, managerName }
         </p>
 
         {barData.length > 0 ? (
-          <ResponsiveContainer width="99%" height={280}>
+          <div className="overflow-x-auto">
+          <div style={{ minWidth: Math.max(320, barData.length * 48) }}>
+          <ResponsiveContainer width="99%" height={300}>
             <BarChart
               data={barData}
               margin={{ top: 5, right: 10, left: 10, bottom: 40 }}
@@ -190,6 +192,8 @@ const SpeechRatioBlock: React.FC<SpeechRatioBlockProps> = ({ data, managerName }
               />
             </BarChart>
           </ResponsiveContainer>
+          </div>
+          </div>
         ) : (
           <div className="text-center py-8">
             <p className="text-sm font-semibold" style={{ color: "var(--ds-text-primary)" }}>

@@ -206,15 +206,19 @@ const ManagerCard: React.FC<{ m: ManagerSalesCard; tier: Tier }> = ({ m, tier })
         </div>
       </Link>
 
-      {/* 4 stats */}
+      {/* stats */}
       <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mb-3">
         {[
+          { label: "Lid", value: m.leadCount.toString() },
           { label: "Qual lid", value: m.qualifiedLeadCount.toString() },
           { label: "Konv", value: `${m.conversionRate}%` },
           { label: "Sotuv", value: m.salesCount.toString() },
-          { label: "Summa", value: formatMoney(m.revenue) },
+          { label: "Summa", value: formatMoney(m.revenue), full: true },
         ].map((s) => (
-          <div key={s.label} className="flex items-baseline gap-1.5">
+          <div
+            key={s.label}
+            className={`flex items-baseline gap-1.5${s.full ? " col-span-2" : ""}`}
+          >
             <span
               className="text-sm font-bold leading-none"
               style={{ color: "var(--text-primary)" }}

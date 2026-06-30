@@ -8,7 +8,8 @@ import SectionHeader from "../../components/ui/stats/SectionHeader";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
 
-const MAX_MB = 500;
+const MAX_MB = 2048; // 2 GB — 10 soatgacha audio yuqori bitrate'da ham sig'adi
+const MAX_LABEL = MAX_MB >= 1024 ? `${MAX_MB / 1024} GB` : `${MAX_MB} MB`;
 
 const AudioUploadPage: React.FC = () => {
   const navigate = useNavigate();
@@ -34,7 +35,7 @@ const AudioUploadPage: React.FC = () => {
 
   const pickFile = (f: File) => {
     if (f.size > MAX_MB * 1024 * 1024) {
-      setError(`Fayl ${MAX_MB} MB dan oshmasligi kerak`);
+      setError(`Fayl ${MAX_LABEL} dan oshmasligi kerak`);
       return;
     }
     if (!f.type.startsWith("audio/")) {
@@ -112,7 +113,7 @@ const AudioUploadPage: React.FC = () => {
                 Audio faylni shu yerga olib keling
               </p>
               <p className="text-sm mt-1" style={{ color: "var(--text-secondary, #94a3b8)" }}>
-                yoki bosib tanlang · maksimum {MAX_MB} MB
+                yoki bosib tanlang · maksimum {MAX_LABEL}
               </p>
             </>
           )}

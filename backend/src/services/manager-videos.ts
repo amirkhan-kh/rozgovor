@@ -32,7 +32,7 @@ import { ManagerVideo } from "@prisma/client";
 const YANDEX_ENDPOINT =
   process.env.YANDEX_STORAGE_ENDPOINT || "https://storage.yandexcloud.net";
 const YANDEX_BUCKET =
-  process.env.YANDEX_BUCKET_AUDIO || "sales-ai-storage";
+  process.env.YANDEX_BUCKET_AUDIO || process.env.YANDEX_BUCKET || "sales-ai-storage";
 const YANDEX_URL_PREFIX = `${YANDEX_ENDPOINT}/${YANDEX_BUCKET}/`;
 
 const VERTEX_PROJECT = process.env.VERTEX_PROJECT || "big-quanta-469517-h6";

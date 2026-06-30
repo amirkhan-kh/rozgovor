@@ -59,7 +59,7 @@ const PlaylistsPage: React.FC = () => {
               <Link
                 key={item.audioFileId}
                 to={`/audio/${item.audioFileId}`}
-                className="block p-3 rounded-lg border hover:shadow-md transition-all"
+                className="block p-3 rounded-lg border transition-shadow hover:shadow-lg hover:ring-1 hover:ring-white/15"
                 style={{ backgroundColor: "var(--color-bg)", borderColor: "var(--color-border)" }}
               >
                 <div className="flex items-center justify-between flex-wrap gap-2">
@@ -140,7 +140,7 @@ const PlaylistsPage: React.FC = () => {
             <button
               key={p.key}
               onClick={() => setActiveKey(p.key)}
-              className="text-left p-4 rounded-xl border hover:shadow-md hover:scale-[1.01] transition-all"
+              className="text-left p-4 rounded-xl border transition-shadow hover:shadow-lg hover:ring-1 hover:ring-white/15"
               style={{
                 backgroundColor: "var(--color-card-bg)",
                 borderColor: "var(--color-border)",

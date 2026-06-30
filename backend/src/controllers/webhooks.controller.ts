@@ -63,6 +63,22 @@ export const bitrixWebhook = async (req: Request, res: Response): Promise<void> 
     if (!company) return;
     const companyId = company.id;
 
+    // DELETE eventlari — Bitrix'da o'chirilgan/birlashtirilgan yozuvni DB'dan ham
+    // olib tashlaymiz (stale yig'ilib qolmasligi uchun). startsWith tekshiruvidan
+    // OLDIN bo'lishi shart (aks holda ONCRMDEALDELETE upsert branch'ga tushadi).
+    if (event === "ONCRMDEALDELETE") {
+      await prisma.salesLead.deleteMany({ where: { companyId, leadId: id } });
+      broadcast({ type: "refresh", companyId });
+      console.log(`[bitrix-webhook] ${event} deal=${id} deleted`);
+      return;
+    }
+    if (event === "ONCRMLEADDELETE") {
+      await prisma.lead.deleteMany({ where: { companyId, bitrixLeadId: id } });
+      broadcast({ type: "refresh", companyId });
+      console.log(`[bitrix-webhook] ${event} lead=${id} deleted`);
+      return;
+    }
+
     if (event.startsWith("ONCRMDEAL")) {
       const result = await upsertDealById(companyId, id);
       if (!result) return;

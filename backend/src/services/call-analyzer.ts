@@ -1521,7 +1521,7 @@ export const analyzeCall = async (
           contents: [{ role: "user", parts: [{ text: userMessage }] }],
           config: {
             temperature: 0,
-            maxOutputTokens: 32768,
+            maxOutputTokens: 65536,
             responseMimeType: "application/json",
             responseSchema,
             systemInstruction: { parts: [{ text: systemInstruction }] },
@@ -1538,7 +1538,7 @@ export const analyzeCall = async (
           contents: prompt,
           config: {
             temperature: 0,
-            maxOutputTokens: 32768,
+            maxOutputTokens: 65536,
             responseMimeType: "application/json",
           },
         }),

@@ -27,7 +27,6 @@ import { dashboardService, DashboardFilters } from "../../services/dashboard.ser
 import { salesService } from "../../services/sales.service";
 import { managersService } from "../../services/managers.service";
 import ManagerDeptFilter from "../../components/filters/ManagerDeptFilter";
-import CallsTrendChart from "../dashboard/components/CallsTrendChart";
 import DurationBlock from "../dashboard/components/DurationBlock";
 import SpeechRatioBlock from "../dashboard/components/SpeechRatioBlock";
 import CriteriaTeamChart from "../dashboard/components/CriteriaTeamChart";
@@ -319,10 +318,6 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
   const { data: objectionsData } = useQuery({
     queryKey: ["dashboard-objections", filters],
     queryFn: () => dashboardService.getObjections(filters),
-  });
-  const { data: trendData } = useQuery({
-    queryKey: ["dashboard-trend", filters],
-    queryFn: () => dashboardService.getCallsTrend(filters),
   });
   const { data: speechData } = useQuery({
     queryKey: ["dashboard-speech", filters],
@@ -1100,7 +1095,7 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
               Aniqlangan xatoliklar
             </h2>
           </div>
-          <ErrorsBlock data={errorsData} />
+          <ErrorsBlock data={errorsData} filters={filters} />
         </div>
       )}
 
@@ -1149,22 +1144,6 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
               <CriteriaManagersTable data={criteriaData} />
             </Card>
           </div>
-        </div>
-      )}
-
-      {/* ── 6) Qo'ng'iroqlar trendi ───────────────── */}
-      {trendData && trendData.length > 0 && (
-        <div>
-          <div className="flex items-center gap-2 mb-3 px-1">
-            <BarChart3 size={18} style={{ color: "#3b5ef5" }} />
-            <h2
-              className="text-base font-bold"
-              style={{ color: "var(--text-primary)" }}
-            >
-              Qo'ng'iroqlar trendi
-            </h2>
-          </div>
-          <CallsTrendChart data={trendData} />
         </div>
       )}
 

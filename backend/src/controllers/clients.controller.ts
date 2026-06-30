@@ -82,6 +82,14 @@ const LABEL_RULES: Array<{
     patterns: [/natija/, /samarasiz/, /samara yo/, /effekt berm/, /foyda yo/, /konversiya/],
     canonical: "Natija kafolati yo'q",
   },
+  // ── Rus tili — kompaniya AYNAN rus tili kursi sotadi, shuning uchun shunchaki
+  //    "Rus tili" qiziqish/qo'rquv sifatida TRIVIAL shovqin (deyarli har mijozda
+  //    bor) → ikkala chartdan ham CHIQARILADI (SKIP). Faqat DIFFERENTIATING
+  //    variantlar qoladi: "Rus tili (ish uchun)" + "Rus tili kurslari".
+  //    Tartim MUHIM: avval maxsus variantlar, keyin umumiy "rus til" → SKIP.
+  { patterns: [/rus.*ish uchun/, /ish uchun.*rus/], canonical: "Rus tili (ish uchun)" },
+  { patterns: [/rus til.*kurs/, /kurs.*rus til/], canonical: "Rus tili kurslari" },
+  { patterns: [/rus til/], canonical: SKIP_CANONICAL },
   {
     patterns: [/spam/, /bezovta/],
     canonical: "Spam qo'ng'iroqlar",
@@ -185,6 +193,49 @@ const canonicalize = (raw: string): string => {
   // Fallback — asl qiymatni lowercase (grouping key) qilib ishlatamiz
   // lekin display uchun title-case versiyasini saqlaymiz.
   return norm;
+};
+
+// ROZGOVOR (rus tili kurslari) uchun mos kelmaydigan, ProSales B2B shablonidan
+// qolgan / AI gallyutsinatsiya qilgan "qiziqish" kategoriyalari — chartda
+// ko'rsatilmasin (SKIP). Mijozlar ind. til o'rganuvchilar; CRM/Lead/IELTS/Sotuv
+// kabilar ularning qiziqishi emas.
+const IRRELEVANT_INTEREST_CANONICALS = new Set([
+  "Sotuvni rivojlantirish",
+  "Sotuv",
+  "CRM / ERP",
+  "IELTS / Ingliz tili",
+  "Onlayn ta'lim/savdo",
+  "Lead generatsiya",
+  "Call-center",
+  "Xodim boshqaruvi",
+  "Konsultatsiya",
+  "Marketing",
+]);
+// Mijozning KASBI/SOHASI yoki to'lov-xulqi — bular "nega rus tili o'rganmoqchi"
+// emas, AI ortiqcha ekstraktsiya qilgan shovqin. normalizeAscii formatida
+// (lowercase, apostrofsiz) tekshiriladi. Rus tili motivlari (ish, sayohat,
+// muloqot, farzand, karyera, Rossiyada ishlash, yuridik rus tili...) SAQLANADI.
+const SKIP_INTEREST_PATTERNS: RegExp[] = [
+  /tibbiyot|meditsina|farmatsevt/, // tibbiyot/farmatsevtika
+  /pedagog|oqituvchi|dars berish|rus maktabida/, // pedagogika/o'qituvchilik
+  /\bbank\b|bankomat/, // bank ishi/sohasi
+  /iqtisod/, // iqtisodiyot
+  /\byurist/, // yuristlik ("yuridik rus tili" — saqlanadi)
+  /\bhr\b/, // HR menejerlik
+  /arxitektura/,
+  /aviatsiya/,
+  /tikuvchilik/,
+  /texnologiya/,
+  /ozbek filologiya/, // o'zbek filologiyasi (rus emas)
+  /bolib tolash/, // bo'lib to'lash — to'lov sharti, qiziqish emas
+  /oila bilan maslahat/, // qaror xulqi, qiziqish emas
+];
+const canonicalizeInterest = (raw: string): string => {
+  const norm = normalizeAscii(raw);
+  if (SKIP_INTEREST_PATTERNS.some((re) => re.test(norm))) return SKIP_CANONICAL;
+  const c = canonicalize(raw);
+  if (IRRELEVANT_INTEREST_CANONICALS.has(c)) return SKIP_CANONICAL;
+  return c;
 };
 
 // Region uchun strict canonicalize — faqat ALLOWED_REGIONS ro'yxatidagilar
@@ -858,17 +909,25 @@ export const getClientInsights = async (
     const topSources = countByCanonical(clients.map((c) => c.sourceName));
 
     // String[] arrays — flatten + canonical count
-    const flatCountByCanonical = (arrs: string[][], limit = 10) => {
+    const flatCountByCanonical = (
+      arrs: string[][],
+      limit = 10,
+      canon: (s: string) => string = canonicalize,
+    ) => {
       const flat: string[] = [];
       for (const arr of arrs) {
         for (const item of arr) {
           if (item?.trim()) flat.push(item.trim());
         }
       }
-      return countByCanonical(flat, limit, false);
+      return countByCanonical(flat, limit, false, canon);
     };
 
-    const topInterests = flatCountByCanonical(clients.map((c) => c.interests));
+    const topInterests = flatCountByCanonical(
+      clients.map((c) => c.interests),
+      10,
+      canonicalizeInterest,
+    );
     const topFears = flatCountByCanonical(clients.map((c) => c.fears));
 
     // Json[] arrays — topQuestions / topObjections: [{q/obj, count}]

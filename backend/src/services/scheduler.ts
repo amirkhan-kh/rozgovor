@@ -13,26 +13,94 @@ import { refreshAllCompanyPlaybooks } from "./top-performer";
 import { getOverdueFollowups, followupReasonLabel } from "./followup-tracker";
 import { refreshAllObjectionLibraries } from "./objection-library";
 import { syncAllCompaniesSalesLeads } from "./sales-leads-sync";
-import { runBitrixIncrementalSync } from "./bitrix-sync";
+import { runBitrixIncrementalSync, runBitrixReconcile, runBitrixReconcileRecent } from "./bitrix-sync";
+import { runBitrixCallsSync } from "./bitrix-calls-sync";
 import { prewarmClientInsights } from "../controllers/clients.controller";
 import { runActivitiesSync } from "../controllers/activities.controller";
 import { pollVideoOperations } from "./manager-videos";
 
 export const initScheduler = (): void => {
-  // Bitrix24'dan incremental sync — har 5 daqiqada oxirgi 15 daqiqadagi
-  // o'zgargan deal/lidlarni DB'ga olib keladi (TV reyting live qoladi).
-  // SKIP_CRON'dan mustasno — lokal dev'da ham yoqilgan bo'lsin.
+  // Bitrix sync/reconcile ishlarini SERIALIZATSIYA qiluvchi guard — bir ish
+  // tugamasdan ikkinchisi boshlanmaydi. Catch-up paytida (DB juda orqada) qisqa
+  // reconcile 5 daqiqadan uzoq cho'zilishi mumkin → guard pile-up va bir vaqtda
+  // Bitrix API hammaring oldini oladi.
+  let bitrixBusy = false;
+  const runBitrixGuarded = async (label: string, fn: () => Promise<void>): Promise<void> => {
+    if (bitrixBusy) {
+      console.log(`[${label}] oldingi bitrix ishi hali tugamagan — skip`);
+      return;
+    }
+    bitrixBusy = true;
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`[${label}] failed:`, (err as Error).message);
+    } finally {
+      bitrixBusy = false;
+    }
+  };
+
+  // Har 5 daqiqa: incremental (DATE_MODIFY, eski yozuv o'zgarishi) +
+  // qisqa reconcile (DATE_CREATE oxirgi N kun — yangi + o'chirilganni tenglashtiradi).
   // O'chirish uchun: SKIP_BITRIX_SYNC=true .env ga qo'shing.
   if (process.env.SKIP_BITRIX_SYNC !== "true") {
-    cron.schedule("*/5 * * * *", async () => {
-      console.log("[bitrix-sync cron] tick — yangilanish boshlandi");
-      try {
+    cron.schedule("*/5 * * * *", () =>
+      runBitrixGuarded("bitrix-sync cron", async () => {
+        console.log("[bitrix-sync cron] tick — incremental + qisqa reconcile");
         await runBitrixIncrementalSync();
-      } catch (err) {
-        console.error("[bitrix-sync cron] failed:", (err as Error).message);
-      }
-    });
-    console.log("[Scheduler] Bitrix incremental sync: har 5 daqiqada");
+        if (process.env.SKIP_BITRIX_RECONCILE !== "true") {
+          await runBitrixReconcileRecent();
+        }
+      }),
+    );
+    console.log("[Scheduler] Bitrix incremental + qisqa reconcile: har 5 daqiqada");
+  }
+
+  // To'liq reconcile — kunlik 04:10 (oxirgi M oy, eski o'chirilganlar uchun) +
+  // boot'da bir marta qisqa reconcile (restartdan keyin tez tenglashish).
+  // O'chirish uchun: SKIP_BITRIX_RECONCILE=true .env ga qo'shing.
+  if (process.env.SKIP_BITRIX_RECONCILE !== "true") {
+    setTimeout(
+      () => runBitrixGuarded("bitrix-reconcile boot", runBitrixReconcileRecent),
+      30000,
+    ); // 30s keyin — boot to'la tugagach
+
+    cron.schedule("10 4 * * *", () =>
+      runBitrixGuarded("bitrix-reconcile cron", async () => {
+        console.log("[bitrix-reconcile cron] tick — to'liq sverka (oxirgi oylar)");
+        await runBitrixReconcile();
+      }),
+    );
+    console.log("[Scheduler] Bitrix reconcile: kunlik 04:10 (to'liq) + har 5 daq (qisqa) + boot");
+  }
+
+  // Bitrix qo'ng'iroq (voximplant) → AudioFile sync — har 30 daq + boot.
+  // Audit/Audio sahifa qo'ng'iroq statistikasi DOIMO Bitrix bilan tenglashadi.
+  // Incremental (oxirgi callDate'dan). O'chirish: SKIP_BITRIX_CALLS_SYNC=true.
+  if (process.env.SKIP_BITRIX_CALLS_SYNC !== "true") {
+    setTimeout(
+      () => runBitrixGuarded("bitrix-calls-sync boot", runBitrixCallsSync),
+      45000,
+    ); // 45s keyin — deal/lead boot'dan keyin
+
+    cron.schedule("*/30 * * * *", () =>
+      runBitrixGuarded("bitrix-calls-sync cron", async () => {
+        console.log("[bitrix-calls-sync cron] tick — qo'ng'iroqlar sync");
+        await runBitrixCallsSync();
+      }),
+    );
+    console.log("[Scheduler] Bitrix qo'ng'iroq sync: har 30 daqiqada + boot");
+  }
+
+  // Imtihon stsenariylari — boot'da auto-seed (create-only, idempotent, mavjudni
+  // BUZMAYDI). Aks holda bo'sh kompaniyada "Imtihon belgilash" → "faol stsenariy
+  // yo'q" → 500. O'chirish: SKIP_EXAM_SEED=true .env ga qo'shing.
+  if (process.env.SKIP_EXAM_SEED !== "true") {
+    setTimeout(() => {
+      import("./voice-exam/seed-scenarios")
+        .then((m) => m.seedScenariosForAllCompanies())
+        .catch((err) => console.error("[exam-seed boot] failed:", (err as Error).message));
+    }, 20000);
   }
 
   // ─── Activities (Zadachalar) sync — har soatda so'nggi 7 kun ─────────

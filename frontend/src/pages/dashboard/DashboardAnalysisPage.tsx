@@ -563,7 +563,7 @@ const DashboardAnalysisPage: React.FC = () => {
           errorsData ? (
             <div>
               <SectionHeader title="Aniqlangan xatoliklar va tavsiyalar" subtitle="Eng ko'p uchraydigan xatoliklar" />
-              <ErrorsBlock data={errorsData} />
+              <ErrorsBlock data={errorsData} filters={filters} />
             </div>
           ) : <SkeletonTable rows={5} cols={4} />
         )}

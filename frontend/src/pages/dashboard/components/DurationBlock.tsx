@@ -31,10 +31,12 @@ const formatDuration = (seconds: number): string => {
 };
 
 const formatTotalDuration = (seconds: number): string => {
-  const h = Math.floor(seconds / 3600);
+  const days = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.round(seconds % 60);
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  const hms = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return days > 0 ? `${days} kun ${hms}` : hms;
 };
 
 const ACCENT = "#3b5ef5";
@@ -128,11 +130,13 @@ const DurationBlock: React.FC<DurationBlockProps> = ({ stats, managerName, manag
         </p>
 
         {barData.length > 0 ? (
-          <ResponsiveContainer width="99%" height={280}>
+          <div className="overflow-x-auto">
+          <div style={{ minWidth: Math.max(320, barData.length * 64) }}>
+          <ResponsiveContainer width="99%" height={300}>
             <BarChart
               data={barData}
               margin={{ top: 5, right: 10, left: 10, bottom: 40 }}
-              barCategoryGap="25%"
+              barCategoryGap="15%"
             >
               <CartesianGrid
                 strokeDasharray="3 3"
@@ -166,10 +170,12 @@ const DurationBlock: React.FC<DurationBlockProps> = ({ stats, managerName, manag
                 dataKey="duration"
                 fill={ACCENT}
                 radius={[6, 6, 0, 0]}
-                maxBarSize={40}
+                maxBarSize={60}
               />
             </BarChart>
           </ResponsiveContainer>
+          </div>
+          </div>
         ) : (
           <div className="text-center py-8">
             <p className="text-sm font-semibold" style={{ color: "var(--ds-text-primary)" }}>

@@ -37,17 +37,19 @@ const CriteriaChart: React.FC<{ group: CriteriaGroup; label: string; managerName
     );
   }
 
-  const orderedKeys = Object.keys(group.team);
+  const sortedKeys = Object.keys(group.team);
 
-  const chartData = orderedKeys.map((name) => ({
+  // Recharts layout="vertical" without `reversed`: first data item at TOP.
+  // Backend data tartibi DB sortOrder bo'yicha (1→7 → top→bottom), teskari qilmaymiz.
+  const chartData = sortedKeys.map((name) => ({
     name,
     score: group.team[name] || 0,
     fill: scoreColor(group.team[name] || 0),
   }));
 
-  const criteriaCards = orderedKeys.map((name, idx) => ({
+  const criteriaCards = Object.entries(group.team).map(([name, score], idx) => ({
     name,
-    score: group.team[name] || 0,
+    score,
     color: CRITERIA_COLORS[idx % CRITERIA_COLORS.length],
   }));
 
