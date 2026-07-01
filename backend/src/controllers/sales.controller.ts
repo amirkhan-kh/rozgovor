@@ -1375,37 +1375,33 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       count: r._count.bitrixLeadId,
     }));
 
-    // ─── 7) Rad etish sabablari ("Sifatsiz lid" — UF_CRM_69CFC6BD9EFCB) ──
-    // A usul: sabab belgilangan HAR QANDAY deal (semanticId filtrisiz). Bu
-    // portalda sabab F-deal'ga emas, NEW/P (jarayonda) deal'ga belgilanadi,
-    // shuning uchun semanticId:"F" filtri bo'lmaydi. Davr filtri leadCreatedAt
-    // (closedAt EMAS — sabab yopilmagan deal'da, closedAt reja sanasi bo'lib aldaydi).
-    const dealRejectRows = await prisma.salesLead.groupBy({
-      by: ["closeReasonName"],
+    // ─── 7) Rad etish sabablari ("Sifatsiz lid" — Lead.rejectReasonName) ──
+    // ROZGOVOR portalida manager tanlagan sabab LEAD custom field'dan keladi.
+    // Deal.closeReasonName bu joy uchun to'liq manba emas: week filterda faqat
+    // eski deal sababi chiqib qoladi, Lead.rejectReasonName esa 4 ta real sababni beradi.
+    const leadRejectRows = await prisma.lead.groupBy({
+      by: ["rejectReasonName"],
       where: (() => {
         const w: Record<string, unknown> = {
           companyId,
-          closeReasonName: { not: null },
+          rejectReasonName: { not: null },
         };
-        if (dateRange) w.leadCreatedAt = dateRange;
-        if (pipelineIds) w.pipelineId = { in: pipelineIds };
+        if (dateRange) w.dateCreate = dateRange;
         if (managerIds) w.responsibleManagerId = { in: managerIds };
-        if (bitrixLeadIdsFromSources)
-          w.originalLeadId =
-            bitrixLeadIdsFromSources.length > 0
-              ? { in: bitrixLeadIdsFromSources }
-              : { in: [-1] };
+        if (sourceIds) w.sourceId = { in: sourceIds };
+        if (leadBitrixIdsFromPipelines)
+          w.bitrixLeadId = { in: leadBitrixIdsFromPipelines };
         return w;
       })(),
-      _count: { leadId: true },
-      orderBy: { _count: { leadId: "desc" } },
+      _count: { bitrixLeadId: true },
+      orderBy: { _count: { bitrixLeadId: "desc" } },
     });
 
-    const rejectionBreakdown = dealRejectRows
-      .filter((r) => r.closeReasonName && r._count.leadId > 0)
+    const rejectionBreakdown = leadRejectRows
+      .filter((r) => r.rejectReasonName && r._count.bitrixLeadId > 0)
       .map((r) => ({
-        name: r.closeReasonName as string,
-        count: r._count.leadId,
+        name: r.rejectReasonName as string,
+        count: r._count.bitrixLeadId,
       }));
 
     success(res, {

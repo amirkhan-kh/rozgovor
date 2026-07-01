@@ -279,7 +279,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       const candidates = await prisma.audioFile.findMany({
         where,
         select: {
-          id: true, leadId: true, phoneNumber: true, isSale: true,
+          id: true, leadId: true, crmLeadId: true, phoneNumber: true, isSale: true,
           statusName: true, pipelineName: true, createdAt: true,
           analysis: { select: rejectionAnalysisSelect },
         },

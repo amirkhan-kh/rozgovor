@@ -856,49 +856,6 @@ const AudioDetailPage: React.FC = () => {
         );
       })()}
 
-      {/* 🚩 Yo'qotilgan lid tahlili — CRM yopish sababi + manager haq/noxaq verdict */}
-      {rejectionInfo && (
-        <div className="rounded-xl border p-4 space-y-4" style={{ borderColor: "var(--color-border)" }}>
-          <div className="text-sm font-semibold">Yo'qotilgan lid tahlili</div>
-
-          <div className="rounded-xl p-4" style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)" }}>
-            <div className="flex items-center gap-2 mb-2" style={{ color: "#ef4444" }}>
-              <Flag size={18} />
-              <span className="text-sm font-bold">{rejectionLabel}</span>
-            </div>
-            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{rejectionShort}</p>
-          </div>
-
-          {rejectionInfo.managerVerdict && (
-            <div className="rounded-xl p-4" style={{ backgroundColor: verdictStyle(rejectionInfo.managerVerdict.status).bg, border: `1px solid ${verdictStyle(rejectionInfo.managerVerdict.status).border}` }}>
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>CRM tekshiruvi</div>
-                <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ color: verdictStyle(rejectionInfo.managerVerdict.status).color, backgroundColor: "rgba(0,0,0,0.12)" }}>
-                  {rejectionInfo.managerVerdict.status === "right" ? "Tasdiqlandi"
-                    : rejectionInfo.managerVerdict.status === "wrong" ? "Mos emas"
-                    : (rejectionInfo.managerVerdict.label || "Aniq emas")}
-                </span>
-              </div>
-              {rejectionInfo.managerReason && (
-                <p className="text-sm mb-2 whitespace-pre-wrap break-words">CRM sababi: <b>{rejectionInfo.managerReason}</b></p>
-              )}
-              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{rejectionInfo.managerVerdict.short}</p>
-            </div>
-          )}
-
-          {rejectionEvidence.length > 0 && (
-            <div className="rounded-xl p-4" style={{ backgroundColor: "rgba(156,163,175,0.06)", border: "1px solid rgba(156,163,175,0.18)" }}>
-              <div className="text-xs font-semibold mb-2" style={{ color: "var(--text-secondary)" }}>Asoslar</div>
-              <ul className="space-y-2 text-sm">
-                {rejectionEvidence.map((line, i) => (
-                  <li key={i} className="flex gap-2"><span style={{ color: "var(--text-secondary)" }}>-</span><span className="break-words min-w-0">{line}</span></li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* "Suhbat aniqlanmadi" izoh — faqat no_conversation holat uchun */}
       {isNoConv && (
         <>
@@ -1088,6 +1045,60 @@ const AudioDetailPage: React.FC = () => {
           </div>
 
           {/* Errors — accordion dropdown */}
+          {rejectionInfo && (
+            <Card title="Yo'qotilgan lid tahlili">
+              <div className="space-y-4">
+                <div
+                  className="rounded-xl p-4"
+                  style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)" }}
+                >
+                  <div className="flex items-center gap-2 mb-2" style={{ color: "#ef4444" }}>
+                    <Flag size={18} />
+                    <span className="text-sm font-bold">{rejectionLabel}</span>
+                  </div>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
+                    {rejectionShort}
+                  </p>
+                </div>
+
+                {rejectionInfo.managerVerdict && (
+                  <div className="rounded-xl p-4" style={{ backgroundColor: verdictStyle(rejectionInfo.managerVerdict.status).bg, border: `1px solid ${verdictStyle(rejectionInfo.managerVerdict.status).border}` }}>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>CRM tekshiruvi</div>
+                      <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ color: verdictStyle(rejectionInfo.managerVerdict.status).color, backgroundColor: "rgba(0,0,0,0.12)" }}>
+                        {rejectionInfo.managerVerdict.status === "right" ? "Tasdiqlandi"
+                          : rejectionInfo.managerVerdict.status === "wrong" ? "Mos emas"
+                          : (rejectionInfo.managerVerdict.label || "Aniq emas")}
+                      </span>
+                    </div>
+                    {rejectionInfo.managerReason && (
+                      <p className="text-sm mb-2 whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
+                        CRM sababi: <b>{rejectionInfo.managerReason}</b>
+                      </p>
+                    )}
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
+                      {rejectionInfo.managerVerdict.short}
+                    </p>
+                  </div>
+                )}
+
+                {rejectionEvidence.length > 0 && (
+                  <div className="rounded-xl p-4" style={{ backgroundColor: "rgba(156,163,175,0.06)", border: "1px solid rgba(156,163,175,0.18)" }}>
+                    <div className="text-xs font-semibold mb-2" style={{ color: "var(--text-secondary)" }}>Asoslar</div>
+                    <ul className="space-y-2 text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
+                      {rejectionEvidence.map((line, i) => (
+                        <li key={i} className="flex gap-2">
+                          <span style={{ color: "var(--text-secondary)" }}>-</span>
+                          <span className="break-words min-w-0">{line}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
           {analysis.errors.length > 0 && (
             <div
               className="rounded-2xl overflow-hidden border"
