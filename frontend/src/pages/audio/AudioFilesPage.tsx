@@ -148,6 +148,32 @@ const verdictStyle = (status?: string) => {
   return { label: "Sabab yo'q", color: "#94a3b8", bg: "rgba(148,163,184,0.1)", border: "rgba(148,163,184,0.22)" };
 };
 
+const compactRejectionLine = (value: unknown): string =>
+  String(value || "").replace(/\s+/g, " ").trim();
+
+const shortenRejectionPreview = (value: unknown, max = 180): string => {
+  const text = compactRejectionLine(value);
+  if (text.length <= max) return text;
+  const boundary = text.lastIndexOf(" ", max - 1);
+  const cut = boundary > 90 ? boundary : max;
+  return `${text.slice(0, cut).trim()}...`;
+};
+
+const rejectionPreviewTextFor = (info: any): string => {
+  if (!info) return "";
+  const main = compactRejectionLine(
+    info.short || info.detail || info.managerVerdict?.short || info.managerReason
+  );
+  const crm = info.managerReason ? compactRejectionLine(`CRM sababi: ${info.managerReason}`) : "";
+  const verdict = info.managerVerdict?.short
+    ? compactRejectionLine(`Tekshiruv: ${info.managerVerdict.short}`)
+    : "";
+  return [shortenRejectionPreview(main, 180), crm, shortenRejectionPreview(verdict, 120)]
+    .filter(Boolean)
+    .slice(0, 3)
+    .join("\n");
+};
+
 // Criterion nomlarini radar uchun qisqa qilish
 const shortCriterionLabel = (name: string): string => {
   const map: Record<string, string> = {
@@ -1226,6 +1252,8 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
                       }))
                   : [];
                 const hasAnalysis = !!audio.analysis && score > 0;
+                const rejectionInfo = audio.analysis?.rejectionInfo;
+                const rejectionPreview = rejectionPreviewTextFor(rejectionInfo);
 
                 // Kategoriya badge: "1-Qo'ng'iroq" (sotuv) / "Qayta qo'ng'iroq" (qayta)
                 const cat = audio.category || "";
@@ -1286,26 +1314,6 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
                           {statusBadge(audio.status, audio.analysis)}
                         </div>
                       </div>
-
-                      {/* 🚩 Manager haq/noxaq verdict badge */}
-                      {rejectionReason && audio.analysis?.rejectionInfo?.managerVerdict && (() => {
-                        const v = verdictStyle(audio.analysis.rejectionInfo.managerVerdict.status);
-                        return (
-                          <div className="mb-3 flex items-center gap-2 flex-wrap">
-                            <span
-                              className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
-                              style={{ color: v.color, backgroundColor: v.bg, border: `1px solid ${v.border}` }}
-                            >
-                              <Flag size={11} /> {v.label}
-                            </span>
-                            {audio.analysis.rejectionInfo.label && (
-                              <span className="text-[11px] text-secondary truncate" title={audio.analysis.rejectionInfo.short || ""}>
-                                {audio.analysis.rejectionInfo.label}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
 
                       {/* Header: score + manager info */}
                       <div className="flex items-start gap-3 mb-3">
@@ -1429,6 +1437,38 @@ const AudioFilesPage: React.FC<AudioFilesPageProps> = ({
                           </p>
                           <p className="text-[10px] mt-0.5" style={{ color: "var(--text-secondary)", opacity: 0.7 }}>
                             {canAnalyze(audio) ? "\"Tahlil\" tugmasini bosing" : "Jarayon kutilmoqda"}
+                          </p>
+                        </div>
+                      )}
+
+                      {rejectionReason && rejectionInfo && (
+                        <div
+                          className="mb-3 rounded-lg px-3 py-2"
+                          style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)" }}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold min-w-0" style={{ color: "#ef4444" }}>
+                              <Flag size={12} className="shrink-0" />
+                              <span className="truncate">{rejectionInfo.label}</span>
+                            </div>
+                            {(() => {
+                              const v = verdictStyle(rejectionInfo.managerVerdict?.status);
+                              return (
+                                <span
+                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
+                                  style={{ color: v.color, backgroundColor: v.bg, border: `1px solid ${v.border}` }}
+                                >
+                                  {v.label}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                          <p
+                            className="text-[11px] leading-relaxed whitespace-pre-wrap break-words"
+                            style={{ color: "var(--text-secondary)" }}
+                            title={String(rejectionInfo.short || "")}
+                          >
+                            {rejectionPreview}
                           </p>
                         </div>
                       )}

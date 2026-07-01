@@ -94,7 +94,12 @@ export const compactText = (value: any): string => {
 // InterWork AmoCRM "закрыто реализовано" mantig'i bu portalga mos emas — closeReasonName'ga tayanamiz.
 export const hasLostLeadSignal = (analysis: any, audio: any = {}): boolean => {
   if (!analysis || audio?.isSale === true) return false;
-  return !!audio?.closeReasonName;
+  return !!(
+    audio?.closeReasonName ||
+    audio?.leadRejectReasonName ||
+    audio?.isJunkLead ||
+    audio?.leadStatusId === "JUNK"
+  );
 };
 
 export const getRejectionInfo = (analysis: any, audio: any = {}) => {
@@ -112,29 +117,42 @@ export const getRejectionInfo = (analysis: any, audio: any = {}) => {
   }
   const primaryObjection = objections[0]?.type || objections[0]?.description || objections[0]?.text || null;
   const primaryLoss = lossPoints[0]?.description || null;
-  const managerReason = audio?.closeReasonName || null;
+  const managerReason = audio?.leadRejectReasonName || audio?.closeReasonName || null;
   const managerVerdict = managerVerdictFor(managerReason, type, aiText);
-  const reasonLabel = managerVerdict?.status === "right" && managerReason
-    ? managerReason
-    : REJECTION_REASON_META[type]?.label || REJECTION_REASON_META.other.label;
+  const aiReasonLabel = REJECTION_REASON_META[type]?.label || REJECTION_REASON_META.other.label;
+  const reasonLabel = managerReason ? managerReason : `AI tahmin: ${aiReasonLabel}`;
+  const aiContextShort = compactText(
+    primaryLoss ||
+    analysis?.followupReason ||
+    analysis?.followupPhrase ||
+    analysis?.summary ||
+    "Yo'qotilgan lid sababi suhbat kontekstidan aniqlangan"
+  );
   const short = managerVerdict?.status === "right" && managerReason
     ? `CRMdagi sabab tasdiqlandi: ${managerReason}.`
-    : compactText(primaryLoss || analysis?.followupReason || analysis?.followupPhrase || analysis?.summary || "Yo'qotilgan lid sababi suhbat kontekstidan aniqlangan");
+    : !managerReason
+      ? `AI tahmin: ${aiReasonLabel}. ${aiContextShort}`
+      : managerVerdict?.status === "wrong"
+        ? `CRM sababi: ${managerReason}. AI tahmin: ${aiReasonLabel}. ${aiContextShort}`
+        : `CRM sababi: ${managerReason}. ${aiContextShort}`;
   const evidence = [
     managerVerdict?.short,
+    (!managerReason || managerVerdict?.status === "wrong") ? `AI tahmin: ${aiReasonLabel}` : null,
     analysis?.followupReason ? `Follow-up sababi: ${compactText(analysis.followupReason)}` : null,
     analysis?.followupPhrase ? `Mijoz iborasi: ${compactText(analysis.followupPhrase)}` : null,
     primaryLoss ? `Yo'qotish nuqtasi: ${compactText(primaryLoss)}` : null,
     primaryObjection ? `E'tiroz: ${compactText(primaryObjection)}` : null,
   ].filter(Boolean).slice(0, 4);
   const detail = [
-    managerReason ? `CRM sababi: ${managerReason}` : null,
+    managerReason ? `CRM sababi: ${managerReason}` : "CRM sababi kiritilmagan",
+    !managerReason ? `AI tahmin: ${aiReasonLabel}` : null,
     `Xulosa: ${managerVerdict?.short || short}`,
     ...evidence.filter((line) => line !== managerVerdict?.short),
   ].filter(Boolean).join("\n");
   return {
     type,
     label: reasonLabel,
+    aiReasonLabel,
     short: String(short),
     detail,
     managerReason,
@@ -148,6 +166,12 @@ export const phoneKey = (phone: any): string | null => {
   return digits.length >= 7 ? digits.slice(-9) : null;
 };
 
+const numericLeadId = (value: any): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const n = parseInt(String(value), 10);
+  return Number.isNaN(n) ? null : n;
+};
+
 export const chunkArray = <T,>(items: T[], size: number): T[][] => {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
@@ -158,7 +182,13 @@ export const chunkArray = <T,>(items: T[], size: number): T[][] => {
 // ⚠️ closedAtRange ishlatilmaydi (B1a) — bu portalda closedAt ishonchsiz.
 export const attachLeadCloseReasons = async (companyId: string, audios: any[]): Promise<any[]> => {
   if (!audios?.length) return audios;
-  const leadIds = [...new Set(audios.map((a) => a.leadId).filter((v) => v != null))];
+  const leadIds = [
+    ...new Set(
+      audios
+        .flatMap((a) => [numericLeadId(a.leadId), numericLeadId(a.crmLeadId)])
+        .filter((v): v is number => v != null)
+    ),
+  ];
   const phones = [...new Set(audios.map((a) => phoneKey(a.phoneNumber)).filter(Boolean))] as string[];
   if (!leadIds.length && !phones.length) return audios;
   const select = {
@@ -202,16 +232,65 @@ export const attachLeadCloseReasons = async (companyId: string, audios: any[]): 
     const p = phoneKey(l.contactPhone);
     if (p && !byPhone.has(p)) byPhone.set(p, l);
   }
+
+  const leadSelect = {
+    bitrixLeadId: true,
+    clientPhone: true,
+    statusId: true,
+    statusName: true,
+    rejectReasonName: true,
+    dateCreate: true,
+  };
+  const fetchCrmLeads = async (OR: any[]) => {
+    if (!OR.length) return [];
+    return prisma.lead.findMany({
+      where: { companyId, OR },
+      select: leadSelect,
+      orderBy: { dateCreate: "desc" },
+    });
+  };
+  const crmLeads: any[] = [];
+  const crmLeadOr: any[] = [];
+  if (leadIds.length) crmLeadOr.push({ bitrixLeadId: { in: leadIds } });
+  crmLeads.push(...await fetchCrmLeads(crmLeadOr));
+  for (const chunk of chunkArray(phones, 50)) {
+    crmLeads.push(...await fetchCrmLeads(chunk.map((p) => ({ clientPhone: { contains: p } }))));
+  }
+  crmLeads.sort((a, b) => new Date(b.dateCreate || 0).getTime() - new Date(a.dateCreate || 0).getTime());
+  const crmByLead = new Map<number, any>();
+  const crmByPhone = new Map<string, any>();
+  for (const l of crmLeads) {
+    if (l.bitrixLeadId != null && !crmByLead.has(l.bitrixLeadId)) crmByLead.set(l.bitrixLeadId, l);
+    const p = phoneKey(l.clientPhone);
+    if (p && !crmByPhone.has(p)) crmByPhone.set(p, l);
+  }
+
   return audios.map((a) => {
-    const lead = (a.leadId != null ? byLead.get(a.leadId) || byOriginal.get(a.leadId) : null) || byPhone.get(phoneKey(a.phoneNumber) as string);
-    return lead ? {
+    const audioLeadIds = [numericLeadId(a.leadId), numericLeadId(a.crmLeadId)].filter(
+      (v): v is number => v != null
+    );
+    const dealLead =
+      audioLeadIds.map((id) => byLead.get(id) || byOriginal.get(id)).find(Boolean) ||
+      byPhone.get(phoneKey(a.phoneNumber) as string);
+    const crmLead =
+      audioLeadIds.map((id) => crmByLead.get(id)).find(Boolean) ||
+      crmByPhone.get(phoneKey(a.phoneNumber) as string);
+    if (!dealLead && !crmLead) return a;
+    return {
       ...a,
-      closeReasonName: lead.closeReasonName || null,
-      leadSemanticId: lead.semanticId || null,
-      leadStatusName: lead.statusName || null,
-      leadClosedAt: lead.closedAt || null,
-      leadTags: a.leadTags || lead.leadTags || null,
-      pipelineName: a.pipelineName || lead.pipelineName || null,
-    } : a;
+      closeReasonName: dealLead?.closeReasonName || null,
+      leadRejectReasonName: crmLead?.rejectReasonName || null,
+      leadStatusId: crmLead?.statusId || null,
+      isJunkLead: crmLead?.statusId === "JUNK",
+      leadSemanticId: dealLead?.semanticId || null,
+      leadStatusName: crmLead?.statusName || dealLead?.statusName || null,
+      leadClosedAt: dealLead?.closedAt || crmLead?.dateCreate || null,
+      leadTags: a.leadTags || dealLead?.leadTags || null,
+      pipelineName: a.pipelineName || dealLead?.pipelineName || null,
+      lostSource: [
+        dealLead?.closeReasonName ? "deal" : null,
+        crmLead?.rejectReasonName || crmLead?.statusId === "JUNK" ? "lead" : null,
+      ].filter(Boolean).join("+") || null,
+    };
   });
 };

@@ -303,6 +303,7 @@ export const getLostVerdicts = async (
       select: {
         id: true,
         leadId: true,
+        crmLeadId: true,
         phoneNumber: true,
         isSale: true,
         pipelineName: true,
