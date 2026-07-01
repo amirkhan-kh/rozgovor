@@ -181,9 +181,8 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
             break;
           }
           case "week": {
-            const day = start.getDay();
-            const diff = day === 0 ? 6 : day - 1;
-            start.setDate(start.getDate() - diff);
+            // "Bu hafta" = Bitrix "Последние 7 дней": today-7 dan bugungacha.
+            start.setDate(start.getDate() - 7);
             start.setHours(0, 0, 0, 0);
             range = { gte: start };
             break;

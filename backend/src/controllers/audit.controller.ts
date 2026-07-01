@@ -48,14 +48,13 @@ const getDateRange = (
       };
     }
     case "week": {
-      const day = tNow.getUTCDay();
-      const diff = day === 0 ? 6 : day - 1;
-      const mon = new Date(Date.UTC(y, m - 1, d - diff));
+      // "Bu hafta" = Bitrix "Последние 7 дней": today-7 dan bugungacha.
+      const from = new Date(Date.UTC(y, m - 1, d - 7));
       return {
         gte: tashkentStartOfDay(
-          mon.getUTCFullYear(),
-          mon.getUTCMonth() + 1,
-          mon.getUTCDate()
+          from.getUTCFullYear(),
+          from.getUTCMonth() + 1,
+          from.getUTCDate()
         ),
         lte: tashkentEndOfDay(y, m, d),
       };

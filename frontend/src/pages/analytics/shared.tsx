@@ -131,6 +131,15 @@ export const tooltipStyle: React.CSSProperties = {
   fontSize: 12,
   color: "var(--chart-tooltip-text,#f5f5f7)",
 };
+export const tooltipTextStyle: React.CSSProperties = {
+  color: "var(--chart-tooltip-text,#f5f5f7)",
+};
+export const tooltipLabelStyle: React.CSSProperties = {
+  color: "var(--text-secondary,#a1a1b5)",
+};
+export const chartCursorStyle = {
+  fill: "var(--chart-cursor-fill,rgba(255,255,255,0.055))",
+};
 
 // ── Avatar Y-axis tick (gorizontal bar chart uchun) ───────────────────────
 // Avatar HECH QACHON siqilmaydi (flex-shrink-0) — uzun ismda oval bo'lmaydi.
@@ -161,8 +170,14 @@ export const DistBars: React.FC<{
     <BarChart data={data} margin={{ top: 20, right: 8, left: -14, bottom: 0 }}>
       <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid,#1f1f2a)" vertical={false} />
       <XAxis dataKey="label" tick={{ fill: "#a1a1b5", fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
-      <YAxis tick={{ fill: "#a1a1b5", fontSize: 11 }} axisLine={false} tickLine={false} width={34} allowDecimals={false} />
-      <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} contentStyle={tooltipStyle} formatter={(v: number) => [`${v}${unit ? ` ${unit}` : ""}`, "Soni"]} />
+      <YAxis tick={{ fill: "#a1a1b1", fontSize: 11 }} axisLine={false} tickLine={false} width={34} allowDecimals={false} />
+      <Tooltip
+        cursor={chartCursorStyle}
+        contentStyle={tooltipStyle}
+        itemStyle={tooltipTextStyle}
+        labelStyle={tooltipLabelStyle}
+        formatter={(v: number) => [`${v}${unit ? ` ${unit}` : ""}`, "Soni"]}
+      />
       <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={72}>
         {data.map((d, i) => <Cell key={i} fill={d.color} />)}
         <LabelList dataKey="count" position="top" fill="#cbd5e1" fontSize={12} fontWeight={600} />
@@ -206,7 +221,13 @@ export const ManagerBars: React.FC<{
         <BarChart data={data} layout="vertical" margin={{ top: 0, right: 88, left: 0, bottom: 0 }} barCategoryGap="28%">
           <XAxis type="number" hide allowDecimals={false} />
           <YAxis type="category" dataKey="name" width={176} interval={0} axisLine={false} tickLine={false} tick={makeAvatarTick(photoByName, 172)} />
-          <Tooltip cursor={{ fill: "rgba(255,255,255,0.05)" }} contentStyle={tooltipStyle} formatter={(v: number) => [valueFormatter ? valueFormatter(v) : `${v}${unitLabel ? ` ${unitLabel}` : ""}`, ""]} />
+          <Tooltip
+            cursor={chartCursorStyle}
+            contentStyle={tooltipStyle}
+            itemStyle={tooltipTextStyle}
+            labelStyle={tooltipLabelStyle}
+            formatter={(v: number) => [valueFormatter ? valueFormatter(v) : `${v}${unitLabel ? ` ${unitLabel}` : ""}`, ""]}
+          />
           <Bar dataKey="value" radius={[0, 8, 8, 0]} maxBarSize={18}>
             {data.map((d, i) => <Cell key={i} fill={d.color || barColor} />)}
             <LabelList dataKey="value" content={ValueLabel} />

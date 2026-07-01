@@ -79,6 +79,38 @@ const parseOpp = (v: unknown): number => {
   return Number.isNaN(n) ? 0 : n;
 };
 
+let leadStatusMapCache: { map: Map<string, string>; expiresAt: number } | null = null;
+async function getLeadStatusMap(): Promise<Map<string, string>> {
+  if (leadStatusMapCache && leadStatusMapCache.expiresAt > Date.now()) {
+    return leadStatusMapCache.map;
+  }
+  const resp = await bitrixCall("crm.status.list", {
+    filter: { ENTITY_ID: "STATUS" },
+  });
+  const map = new Map<string, string>();
+  for (const s of (resp.result as Array<{ STATUS_ID: string; NAME: string }>) || []) {
+    map.set(String(s.STATUS_ID), String(s.NAME));
+  }
+  leadStatusMapCache = { map, expiresAt: Date.now() + 10 * 60 * 1000 };
+  return map;
+}
+
+const normalize = (s: string): string =>
+  s.toLowerCase().replace(/[‘’`ʻ']/g, "").replace(/\s+/g, " ").trim();
+
+function isFullPaymentStatus(statusId: string | null, statusName: string | null): boolean {
+  const id = normalize(statusId || "");
+  const name = normalize(statusName || "");
+  const paymentName =
+    (name.includes("100") && (name.includes("tolov") || name.includes("to lov") || name.includes("оплат"))) ||
+    name.includes("toliq tolov") ||
+    name.includes("toliq to lov") ||
+    name.includes("to liq tolov") ||
+    name.includes("to liq to lov") ||
+    name.includes("полная оплат");
+  return id === "converted" || paymentName;
+}
+
 // Valyuta kurslari cache (10 daqiqa). Bitrix dealarda OPPORTUNITY o'z
 // CURRENCY_ID'sida (USD/EUR/RUB/UZS). Base = UZS. Konvertatsiya qilmasak
 // $200 deal 200 UZS bo'lib qoladi → sotuv summasi buziladi (D6751 bug).
@@ -351,18 +383,23 @@ async function syncRecentDeals(
 // Bitrix lead → Lead maydonlari (companyId/bitrixLeadId'siz — upsert key'i).
 // ⚠️ syncRecentLeads + upsertLeadById + reconcile ikkalasi SHU funksiyani
 // ishlatadi — lead-yo'l ham deal kabi ajralib qolmasligi uchun.
-function buildLeadCore(l: Record<string, unknown>, managerId: string | null) {
+function buildLeadCore(
+  l: Record<string, unknown>,
+  managerId: string | null,
+  statusMap: Map<string, string>
+) {
   const statusId = (l.STATUS_ID as string) || null;
+  const statusName = statusId ? statusMap.get(statusId) || null : null;
   return {
     title: (l.TITLE as string) || null,
     statusId,
-    statusName: null as string | null,
+    statusName,
     sourceId: (l.SOURCE_ID as string) || null,
     opportunity: parseOpp(l.OPPORTUNITY),
     responsibleManagerId: managerId,
     bitrixUserId: l.ASSIGNED_BY_ID ? String(l.ASSIGNED_BY_ID) : null,
     dateCreate: l.DATE_CREATE ? new Date(String(l.DATE_CREATE)) : new Date(),
-    isConverted: statusId === "CONVERTED",
+    isConverted: isFullPaymentStatus(statusId, statusName),
   };
 }
 
@@ -370,6 +407,7 @@ async function syncRecentLeads(
   companyId: string,
   fromIso: string
 ): Promise<number> {
+  const statusMap = await getLeadStatusMap();
   let upserted = 0;
   let start = 0;
 
@@ -397,7 +435,7 @@ async function syncRecentLeads(
       if (Number.isNaN(bitrixLeadId)) continue;
       const bitrixUserId = l.ASSIGNED_BY_ID ? String(l.ASSIGNED_BY_ID) : null;
       const managerId = await ensureManager(companyId, bitrixUserId);
-      const core = buildLeadCore(l, managerId);
+      const core = buildLeadCore(l, managerId, statusMap);
 
       await prisma.lead.upsert({
         where: { companyId_bitrixLeadId: { companyId, bitrixLeadId } },
@@ -464,7 +502,8 @@ export async function upsertLeadById(
   if (Number.isNaN(bitrixLeadId)) return false;
   const bitrixUserId = l.ASSIGNED_BY_ID ? String(l.ASSIGNED_BY_ID) : null;
   const managerId = await ensureManager(companyId, bitrixUserId);
-  const core = buildLeadCore(l, managerId);
+  const statusMap = await getLeadStatusMap();
+  const core = buildLeadCore(l, managerId, statusMap);
 
   await prisma.lead.upsert({
     where: { companyId_bitrixLeadId: { companyId, bitrixLeadId } },

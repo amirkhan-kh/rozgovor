@@ -20,10 +20,9 @@ const getDateRange = (period: string, dateFrom?: string, dateTo?: string): { gte
       return { gte: start, lte: end };
     }
     case "week": {
+      // "Bu hafta" = Bitrix "Последние 7 дней": today-7 dan bugungacha.
       const start = new Date();
-      const day = start.getDay();
-      const diff = day === 0 ? 6 : day - 1; // Dushanba = hafta boshi
-      start.setDate(start.getDate() - diff);
+      start.setDate(start.getDate() - 7);
       start.setHours(0, 0, 0, 0);
       return { gte: start };
     }

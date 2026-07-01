@@ -26,7 +26,7 @@ const PlaylistsPage: React.FC = () => {
       <div className="px-4 md:px-6 py-4 space-y-4 max-w-6xl mx-auto">
         <button
           onClick={() => setActiveKey(null)}
-          className="flex items-center gap-1 text-sm text-secondary hover:text-primary"
+          className="flex items-center gap-1 text-sm text-secondary hover:text-white"
         >
           <ArrowLeft size={16} /> Barcha playlistlar
         </button>

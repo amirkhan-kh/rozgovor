@@ -146,9 +146,9 @@ const getDateRange = (
       };
     }
     case "week": {
-      // "Bu hafta" tugmasi — rolling oxirgi 7 kun (yangi hafta boshlanganda
-      // bo'sh ko'rsatmaslik uchun). Bugun + oldingi 6 kun = 7 kunlik deraza.
-      const sevenDaysAgo = new Date(Date.UTC(y, m - 1, d - 6));
+      // "Bu hafta" = Bitrix "Последние 7 дней" bilan bir xil: today-7 dan bugungacha.
+      // Bitrix presetning boshi = bugundan 7 kun oldingi kun (bugun ham kiradi).
+      const sevenDaysAgo = new Date(Date.UTC(y, m - 1, d - 7));
       return {
         gte: tashkentStartOfDay(
           sevenDaysAgo.getUTCFullYear(),

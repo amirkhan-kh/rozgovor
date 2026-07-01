@@ -46,6 +46,7 @@
   --chart-tooltip-bg: #131319;
   --chart-tooltip-border: #1f1f2a;
   --chart-tooltip-text: #f5f5f7;
+  --chart-cursor-fill: rgba(255, 255, 255, 0.055);
 
   /* ── Design System v2 tokens ─────────────── */
 
@@ -117,6 +118,7 @@
   --chart-tooltip-bg: #ffffff;
   --chart-tooltip-border: #e2e8f0;
   --chart-tooltip-text: #0f172a;
+  --chart-cursor-fill: rgba(15, 23, 42, 0.06);
   color-scheme: light;
 
   /* ── Design System v2 tokens ─────────────── */

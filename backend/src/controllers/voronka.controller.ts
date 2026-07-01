@@ -30,9 +30,8 @@ const getDateRange = (period: string, dateFrom?: string, dateTo?: string): { gte
       return { gte: start, lte: end };
     }
     case "week": {
-      const day = now.getDay();
-      const diff = day === 0 ? 6 : day - 1;
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diff);
+      // "Bu hafta" = Bitrix "Последние 7 дней": today-7 dan bugungacha.
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
       return { gte: start };
     }
     case "month": {
