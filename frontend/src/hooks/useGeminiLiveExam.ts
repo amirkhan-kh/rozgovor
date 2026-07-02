@@ -2,12 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { voiceExamService } from "../services/voice-exam.service";
 import { GeminiLiveExamClient } from "../services/gemini-live-exam.client";
 import { createWorkletBlobUrl } from "../components/exam/audio-capture-worklet";
+import { WS_BASE_URL } from "../services/apiBase";
 
 type Status = "idle" | "connecting" | "listening" | "speaking";
 
 interface UseGeminiLiveExamArgs {
   sessionId: string | undefined;
   enabled: boolean;
+  /** Tanlangan mikrofon deviceId (ixtiyoriy). Bo'sh bo'lsa — brauzer standarti. */
+  deviceId?: string;
 }
 
 interface TurnMessage {
@@ -26,13 +29,23 @@ export interface UseGeminiLiveExamReturn {
   messages: TurnMessage[];
   error: string | null;
   muted: boolean;
+  /** Mikrofon ulandi-yu, lekin boshida umuman signal kelmadi (qurilma muammosi belgisi). */
+  micSilent: boolean;
+  /** Matn (chat) javobini yuborish — AI ovoz + transkript bilan javob beradi. */
+  sendText: (text: string) => void;
   toggleMute: () => void;
   disconnect: () => void;
 }
 
 const OUTPUT_SAMPLE_RATE = 24000;
+const MIC_SIGNAL_PEAK_THRESHOLD = 200;
+const INITIAL_MIC_SIGNAL_GRACE_MS = 12000;
+const SERVER_OPEN_TIMEOUT_MS = 25000;
+// HALF-DUPLEX: AI (mijoz) ovozi tugagach mikrofonni shu qadar (sekund) yopiq
+// ushlaymiz — dinamikdan qaytgan echo/reverb tinishi uchun.
+const AI_SPEAK_TAIL_GUARD_SEC = 0.4;
 
-export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs): UseGeminiLiveExamReturn {
+export function useGeminiLiveExam({ sessionId, enabled, deviceId }: UseGeminiLiveExamArgs): UseGeminiLiveExamReturn {
   const [status, setStatus] = useState<Status>("idle");
   const [micLevel, setMicLevel] = useState(0);
   const [aiLevel, setAiLevel] = useState(0);
@@ -42,6 +55,12 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
   const [messages, setMessages] = useState<TurnMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const [micSilent, setMicSilent] = useState(false);
+  // Mic muammosini aniqlash: faqat sessiya boshida umuman signal kelmasa ogohlantiramiz.
+  const micStartedAtRef = useRef<number>(0);
+  const hasInputSignalRef = useRef(false);
+  const lastSoundAtRef = useRef<number>(0);
+  const workletPeakRef = useRef<number>(0);
 
   const clientRef = useRef<GeminiLiveExamClient | null>(null);
   const inputCtxRef = useRef<AudioContext | null>(null);
@@ -49,6 +68,7 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
   const streamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micSinkRef = useRef<GainNode | null>(null);
   const analyserInRef = useRef<AnalyserNode | null>(null);
   const analyserOutRef = useRef<AnalyserNode | null>(null);
   const outGainRef = useRef<GainNode | null>(null);
@@ -57,14 +77,24 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
   const mutedRef = useRef(false);
   const disposedRef = useRef(false);
   const workletUrlRef = useRef<string | null>(null);
+  const openTimeoutRef = useRef<number | null>(null);
+
+  const clearOpenTimeout = useCallback(() => {
+    if (openTimeoutRef.current !== null) {
+      window.clearTimeout(openTimeoutRef.current);
+      openTimeoutRef.current = null;
+    }
+  }, []);
 
   const disconnect = useCallback(() => {
     disposedRef.current = true;
+    clearOpenTimeout();
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
     try { workletNodeRef.current?.disconnect(); } catch { /* noop */ }
+    try { micSinkRef.current?.disconnect(); } catch { /* noop */ }
     try { sourceNodeRef.current?.disconnect(); } catch { /* noop */ }
     try { analyserInRef.current?.disconnect(); } catch { /* noop */ }
     try { analyserOutRef.current?.disconnect(); } catch { /* noop */ }
@@ -83,6 +113,7 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
     outputCtxRef.current = null;
     workletNodeRef.current = null;
     sourceNodeRef.current = null;
+    micSinkRef.current = null;
     analyserInRef.current = null;
     analyserOutRef.current = null;
     outGainRef.current = null;
@@ -95,7 +126,7 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
       workletUrlRef.current = null;
     }
     setStatus("idle");
-  }, []);
+  }, [clearOpenTimeout]);
 
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
@@ -105,6 +136,19 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
       return next;
     });
   }, []);
+
+  // Matn (chat) yuborish: foydalanuvchi xabarini darhol chatga qo'shamiz,
+  // saqlaymiz va backend orqali Gemini'ga uzatamiz. AI javobi ovoz + transkript
+  // bilan odatdagi handlerlar orqali keladi.
+  const sendText = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t || !clientRef.current) return;
+    setMessages((prev) => [...prev, { role: "salesperson", text: t, ts: Date.now() }]);
+    if (sessionId) {
+      voiceExamService.saveLiveTurn(sessionId, "salesperson", t).catch(() => {});
+    }
+    clientRef.current.sendText(t);
+  }, [sessionId]);
 
   // Enqueue a chunk of PCM 24kHz for playback in sequence
   const enqueueAiAudio = useCallback((pcm: Int16Array) => {
@@ -142,11 +186,10 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
 
         // Backend proxy: wsPath + JWT token
         // Frontend → wss://<host>/api/voice-exam/:id/live-ws?token=<jwt>
-        const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
         const wsPath = (liveInfo as any).wsPath as string | undefined;
         const tokenForWs = (liveInfo as any).token as string;
         const wsUrl = wsPath
-          ? `${proto}//${window.location.host}${wsPath}?token=${encodeURIComponent(tokenForWs)}`
+          ? `${WS_BASE_URL}${wsPath}?token=${encodeURIComponent(tokenForWs)}`
           : "";
 
         // Output audio context (24k for Gemini playback)
@@ -154,6 +197,9 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
           sampleRate: OUTPUT_SAMPLE_RATE,
         });
         outputCtxRef.current = outCtx;
+        if (outCtx.state === "suspended") {
+          try { await outCtx.resume(); } catch { /* noop */ }
+        }
         const gain = outCtx.createGain();
         gain.gain.value = 1;
         const analyserOut = outCtx.createAnalyser();
@@ -167,13 +213,19 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
         // Build the Gemini client (backend proxy WS)
         const client = new GeminiLiveExamClient(wsUrl, "proxy", {
           onOpen: () => {
+            clearOpenTimeout();
             if (!disposedRef.current) setStatus("listening");
           },
           onClose: () => {
+            clearOpenTimeout();
             if (!disposedRef.current) setStatus("idle");
           },
           onError: (err) => {
-            if (!disposedRef.current) setError(err.message || "Bog'lanishda xatolik");
+            clearOpenTimeout();
+            if (!disposedRef.current) {
+              setError(err.message || "Bog'lanishda xatolik");
+              setStatus("idle");
+            }
           },
           onAiAudio: (pcm) => {
             if (!disposedRef.current) enqueueAiAudio(pcm);
@@ -208,19 +260,37 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
           },
         });
         clientRef.current = client;
+        clearOpenTimeout();
+        openTimeoutRef.current = window.setTimeout(() => {
+          if (cancelled || disposedRef.current) return;
+          setError("AI mijozga ulanish 25 sekunddan oshdi. Sahifani yangilang yoki qayta urinib ko'ring.");
+          disconnect();
+        }, SERVER_OPEN_TIMEOUT_MS);
         await client.connect();
         if (cancelled || disposedRef.current) return;
 
         // Mic stream
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: 16000,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        // MUHIM: `sampleRate: 16000` ni getUserMedia constraint sifatida BERMAYMIZ.
+        // Chrome (ayniqsa Windows)da track sample-rate'i (16k) AudioContext rate'i
+        // (odatda 48k) bilan mos kelmasa, createMediaStreamSource JIMLIK chiqaradi
+        // (RMS=0, peak=0 → Vertex hech narsa eshitmaydi). Track'ni qurilmaning tabiiy
+        // rate'ida olamiz va downsampling'ni worklet (haqiqiy `sampleRate`'dan ratio)
+        // bajaradi.
+        // MUHIM #2: echoCancellation/noiseSuppression/autoGainControl'ni O'CHIRAMIZ.
+        // Bular yoqilganda Chrome mikrofonni WebRTC audio-processing moduli (APM)
+        // orqali o'tkazadi. Windows'da APM render-reference topolmasa mikrofonni
+        // QATTIQ nolga aylantiradi (peak=0 → Vertex hech narsa eshitmaydi). Ularni
+        // o'chirib xom mikrofon audiosini olamiz. (Imtihonda quloqchin tavsiya etiladi.)
+        const audioConstraints: MediaTrackConstraints = {
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
+        if (deviceId) {
+          audioConstraints.deviceId = { exact: deviceId };
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
         if (cancelled || disposedRef.current) {
           stream.getTracks().forEach((t) => t.stop());
           return;
@@ -229,6 +299,15 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
 
         const inCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
         inputCtxRef.current = inCtx;
+        // Chrome AudioContext'ni ba'zan "suspended" holatda yaratadi — process() ishlamaydi.
+        if (inCtx.state === "suspended") {
+          try { await inCtx.resume(); } catch { /* noop */ }
+        }
+        try {
+          const micTrack = stream.getAudioTracks()[0];
+          // eslint-disable-next-line no-console
+          console.info("[voice-exam] mic track settings:", micTrack?.getSettings?.(), "| inCtx.sampleRate:", inCtx.sampleRate, "| inCtx.state:", inCtx.state);
+        } catch { /* noop */ }
 
         const url = createWorkletBlobUrl();
         workletUrlRef.current = url;
@@ -242,16 +321,60 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
         node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
           if (mutedRef.current) return;
           const ab = e.data;
-          if (ab instanceof ArrayBuffer) {
-            clientRef.current?.sendAudio(ab);
-          }
+          if (!(ab instanceof ArrayBuffer)) return;
+
+          // HALF-DUPLEX (echo/feedback guard) — ENG MUHIM:
+          // AI (mijoz) ovozi dinamikdan chiqayotgan paytda mikrofon audiosini
+          // Vertex'ga UMUMAN yubormaymiz. Aks holda quloqchinsiz ishlaganda AI o'z
+          // ovozini mikrofon orqali qayta eshitadi, uni "sotuvchi gapirdi" deb
+          // transkript qiladi (ko'pincha buzuq — xitoy/hind/koreys belgilari) va
+          // o'zi bilan o'zi suhbatlashib ketadi. Bu menejer AYTMAGAN gaplar uchun
+          // baholanishiga olib keladi — adolatsiz. Shuning uchun AI gapirayotganda
+          // mikrofon yopiq.
+          const outCtx = outputCtxRef.current;
+          const aiSpeaking =
+            !!outCtx &&
+            outCtx.currentTime < playbackTimeRef.current + AI_SPEAK_TAIL_GUARD_SEC;
+          if (aiSpeaking) return;
+
+          // Haqiqiy yozilgan signal darajasini worklet chunk'idan o'lchaymiz
+          // (analyser emas — bu mikrofon CHIN ovoz yuboryaptimi yo'qmi aniq ko'rsatadi).
+          try {
+            const pcm = new Int16Array(ab);
+            let peak = 0;
+            for (let i = 0; i < pcm.length; i++) {
+              const v = pcm[i] < 0 ? -pcm[i] : pcm[i];
+              if (v > peak) peak = v;
+            }
+            workletPeakRef.current = peak;
+            if (peak > MIC_SIGNAL_PEAK_THRESHOLD) {
+              hasInputSignalRef.current = true;
+              lastSoundAtRef.current = Date.now();
+              setMicSilent(false);
+            }
+          } catch { /* noop */ }
+          clientRef.current?.sendAudio(ab);
         };
         source.connect(analyserIn);
         source.connect(node);
-        // Do NOT connect node to destination — we don't want to hear ourselves.
+        // MUHIM: AudioWorkletNode destination'ga ulanmasa, Chrome grafni "tortmaydi"
+        // va worklet'ga JIMLIK keladi (process() chaqiriladi-yu, kirish nol → RMS=0,
+        // Vertex hech narsa eshitmaydi). Shuning uchun worklet'ni gain=0 (ovozsiz)
+        // tugun orqali destination'ga ulaymiz — o'zimizni eshitmaymiz, lekin mikrofon
+        // audiosi graf bo'ylab oqadi.
+        const muteSink = inCtx.createGain();
+        muteSink.gain.value = 0;
+        node.connect(muteSink);
+        muteSink.connect(inCtx.destination);
         sourceNodeRef.current = source;
         analyserInRef.current = analyserIn;
         workletNodeRef.current = node;
+        micSinkRef.current = muteSink;
+        micStartedAtRef.current = Date.now();
+        lastSoundAtRef.current = micStartedAtRef.current;
+        hasInputSignalRef.current = false;
+        workletPeakRef.current = 0;
+        setMicSilent(false);
 
         // RAF for levels + frequency data
         const inBufLen = analyserIn.fftSize;
@@ -285,6 +408,17 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
           setAiLevel(rmsOut);
           setFrequencyData(new Uint8Array(outFreqBuf));
 
+          // Ogohlantirish faqat boshida umuman signal kelmasa chiqadi. Keyingi sukutlar
+          // normal holat: foydalanuvchi o'ylashi yoki mijoz javobini tinglashi mumkin.
+          if (!mutedRef.current) {
+            const silent =
+              !hasInputSignalRef.current &&
+              Date.now() - micStartedAtRef.current > INITIAL_MIC_SIGNAL_GRACE_MS;
+            setMicSilent((prev) => (prev !== silent ? silent : prev));
+          } else {
+            setMicSilent(false);
+          }
+
           // Status hint: speaking if AI talking, listening otherwise
           if (rmsOut > 0.02) {
             setStatus("speaking");
@@ -296,6 +430,7 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
         };
         rafRef.current = requestAnimationFrame(tick);
       } catch (err: unknown) {
+        clearOpenTimeout();
         if (disposedRef.current) return;
         const msg =
           err && typeof err === "object" && "message" in err
@@ -311,7 +446,7 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
       disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, sessionId]);
+  }, [enabled, sessionId, deviceId]);
 
   return {
     status,
@@ -323,6 +458,8 @@ export function useGeminiLiveExam({ sessionId, enabled }: UseGeminiLiveExamArgs)
     messages,
     error,
     muted,
+    micSilent,
+    sendText,
     toggleMute,
     disconnect,
   };

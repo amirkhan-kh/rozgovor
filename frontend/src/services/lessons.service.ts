@@ -1,4 +1,5 @@
 import api from "./api";
+import { API_BASE_URL } from "./apiBase";
 import { ApiResponse } from "../types";
 
 export type LessonStatus = "processing" | "ready" | "failed";
@@ -545,13 +546,11 @@ export const lessonsService = {
   },
 
   videoStreamUrl(id: string, token: string): string {
-    const base = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
-    return `${base}/my/lessons/${id}/video-stream?token=${encodeURIComponent(token)}`;
+    return `${API_BASE_URL}/my/lessons/${id}/video-stream?token=${encodeURIComponent(token)}`;
   },
 
   adminVideoStreamUrl(id: string, token: string): string {
-    const base = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
-    return `${base}/lessons/${id}/video-stream?token=${encodeURIComponent(token)}`;
+    return `${API_BASE_URL}/lessons/${id}/video-stream?token=${encodeURIComponent(token)}`;
   },
 
   async allManagerStats(): Promise<{

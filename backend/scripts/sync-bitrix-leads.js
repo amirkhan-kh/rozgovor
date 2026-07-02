@@ -27,8 +27,12 @@ async function bitrixCall(method, payload = {}, attempt = 1) {
   }
 }
 
-// Lead'da "Rad etish sabablari" custom field (enumeration)
-const REJECT_REASON_FIELD = "UF_CRM_1755759759770";
+// Lead'da "Rad etish sabablari" ("Sifatsiz lid") custom field (enumeration).
+// ⚠️ Eski UF_CRM_1755759759770 NOTO'G'RI edi (bunday maydon yo'q). Jonli
+// crm.lead.fields'dan tasdiqlangan to'g'ri field (bitrix-sync.ts bilan bir xil):
+const REJECT_REASON_FIELD = "UF_CRM_1775192522399";
+// "Qayta Obrabotka" (qayta ishlov berish) sababi — alohida enum field.
+const REPROCESS_FIELD = "UF_CRM_1744108566958";
 
 async function fetchAllLeads(dateFromISO) {
   const all = [];
@@ -47,6 +51,7 @@ async function fetchAllLeads(dateFromISO) {
         "ASSIGNED_BY_ID",
         "DATE_CREATE",
         REJECT_REASON_FIELD,
+        REPROCESS_FIELD,
       ],
       order: { DATE_CREATE: "ASC" },
       start,
@@ -73,10 +78,10 @@ async function getStatusMap() {
   return map;
 }
 
-// Rad etish sabablari enumeration: ID → label
-async function getRejectReasonMap() {
+// Enumeration field (reject yoki reprocess): ID → label
+async function getEnumMap(fieldId) {
   const resp = await bitrixCall("crm.lead.fields", {});
-  const field = (resp.result || {})[REJECT_REASON_FIELD];
+  const field = (resp.result || {})[fieldId];
   const items = (field && field.items) || [];
   const map = new Map();
   for (const it of items) {
@@ -103,9 +108,12 @@ async function main() {
   const statusMap = await getStatusMap();
   console.log(`   ${statusMap.size} ta status`);
 
-  console.log("2) Rad etish sabablari enum map...");
-  const rejectMap = await getRejectReasonMap();
-  console.log(`   ${rejectMap.size} ta sabab`);
+  console.log("2) Rad etish + Qayta ishlov enum maplar...");
+  const [rejectMap, reprocessMap] = await Promise.all([
+    getEnumMap(REJECT_REASON_FIELD),
+    getEnumMap(REPROCESS_FIELD),
+  ]);
+  console.log(`   rad etish: ${rejectMap.size}, qayta ishlov: ${reprocessMap.size} ta sabab`);
 
   console.log("3) Leadlar yuklanmoqda...");
   const leads = await fetchAllLeads(dateFromISO);
@@ -156,6 +164,10 @@ async function main() {
       ? String(l[REJECT_REASON_FIELD])
       : null;
     const rejectName = rejectId ? rejectMap.get(rejectId) || null : null;
+    const reprocessId = l[REPROCESS_FIELD]
+      ? String(l[REPROCESS_FIELD])
+      : null;
+    const reprocessName = reprocessId ? reprocessMap.get(reprocessId) || null : null;
     const phoneArr = Array.isArray(l.PHONE) ? l.PHONE : [];
     const clientPhone =
       phoneArr.length > 0 && phoneArr[0] && phoneArr[0].VALUE
@@ -179,6 +191,8 @@ async function main() {
         isConverted,
         rejectReasonId: rejectId,
         rejectReasonName: rejectName,
+        reprocessReasonId: reprocessId,
+        reprocessReasonName: reprocessName,
       },
       update: {
         title: l.TITLE || null,
@@ -192,6 +206,8 @@ async function main() {
         isConverted,
         rejectReasonId: rejectId,
         rejectReasonName: rejectName,
+        reprocessReasonId: reprocessId,
+        reprocessReasonName: reprocessName,
       },
     });
     upserted += 1;
@@ -231,6 +247,20 @@ async function main() {
   for (const r of byReject) {
     console.log(
       `  ${(r.rejectReasonName || "— sabab yo'q").padEnd(35)} ${r._count.bitrixLeadId}`
+    );
+  }
+
+  // Qayta ishlov berish sabablari taqsimoti
+  const byReprocess = await prisma.lead.groupBy({
+    by: ["reprocessReasonName"],
+    where: { companyId: company.id, reprocessReasonName: { not: null } },
+    _count: { bitrixLeadId: true },
+    orderBy: { _count: { bitrixLeadId: "desc" } },
+  });
+  console.log("\nQayta ishlov berish sabablari:");
+  for (const r of byReprocess) {
+    console.log(
+      `  ${(r.reprocessReasonName || "— sabab yo'q").padEnd(35)} ${r._count.bitrixLeadId}`
     );
   }
 

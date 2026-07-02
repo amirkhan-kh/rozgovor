@@ -86,6 +86,7 @@ export interface SalesOverview {
   byManager: SalesByManager[];
   leadBreakdown: BreakdownItem[];
   rejectionBreakdown: BreakdownItem[];
+  reprocessBreakdown: BreakdownItem[];
 }
 
 export interface SalesOverviewParams {

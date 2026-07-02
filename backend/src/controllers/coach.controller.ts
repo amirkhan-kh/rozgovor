@@ -1,11 +1,17 @@
 import { Request, Response } from "express";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import { prisma } from "../utils/prisma";
 import { success, error } from "../utils/response";
 
-const COACH_MODEL = "gemini-3-flash-preview";
+const COACH_MODEL = process.env.COACH_MODEL || "gemini-3-flash-preview";
+const COACH_GEMINI_API_MODEL = process.env.COACH_GEMINI_API_MODEL || "gemini-2.5-flash";
+const COACH_OPENAI_MODEL = process.env.COACH_OPENAI_MODEL || "gpt-4o-mini";
+const COACH_VERTEX_LOCATION = process.env.COACH_VERTEX_LOCATION || "global";
+const DEFAULT_VERTEX_PROJECT = "big-quanta-469517-h6";
 
 // Kitob matnini bir marta yuklash
 let knowledgeBase = "";
@@ -18,12 +24,143 @@ try {
   console.error("[Coach] Knowledge base topilmadi");
 }
 
-const getClient = (): GoogleGenAI =>
-  new GoogleGenAI({
+function ensureGoogleCredentialsFile(): void {
+  const existingPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (existingPath && existsSync(existingPath)) return;
+
+  const rawJson =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ||
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+    process.env.GCP_SERVICE_ACCOUNT_JSON;
+
+  if (!rawJson) return;
+
+  try {
+    const parsed = JSON.parse(rawJson.trim().startsWith("{")
+      ? rawJson
+      : Buffer.from(rawJson, "base64").toString("utf8"));
+    const target = join(tmpdir(), "salesai-google-credentials.json");
+    writeFileSync(target, JSON.stringify(parsed), { mode: 0o600 });
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = target;
+  } catch (err) {
+    console.error("[Coach] Google credentials JSON noto'g'ri:", err instanceof Error ? err.message : err);
+  }
+}
+
+const getClient = (): GoogleGenAI => {
+  ensureGoogleCredentialsFile();
+
+  const project =
+    process.env.VERTEX_PROJECT ||
+    process.env.VERTEX_PROJECT_ID ||
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    DEFAULT_VERTEX_PROJECT;
+  return new GoogleGenAI({
     vertexai: true,
-    project: process.env.VERTEX_PROJECT || "",
-    location: process.env.VERTEX_LOCATION || "global",
+    project,
+    location: COACH_VERTEX_LOCATION,
   });
+};
+
+function toGeminiContents(
+  dynamicContext: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>
+) {
+  return [
+    { role: "user", parts: [{ text: dynamicContext }] },
+    {
+      role: "model",
+      parts: [
+        {
+          text: "Tahlilni o'qib bo'ldim. Menejerning aniq daqiqalari, jamoa taqqoslashi va ustozlar playbooki tayyor. Savolingizga javob beraman.",
+        },
+      ],
+    },
+    ...(messages || []).map((m: any) => ({
+      role: m.role === "assistant" ? ("model" as const) : ("user" as const),
+      parts: [{ text: m.content }],
+    })),
+  ];
+}
+
+async function generateWithGeminiApi(
+  stableSystem: string,
+  dynamicContext: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error("Gemini API key missing");
+
+  const client = new GoogleGenAI({ apiKey });
+  const response = await client.models.generateContent({
+    model: COACH_GEMINI_API_MODEL,
+    contents: toGeminiContents(dynamicContext, messages),
+    config: {
+      temperature: 0.3,
+      maxOutputTokens: 4096,
+      systemInstruction: { role: "system", parts: [{ text: stableSystem }] },
+    },
+  });
+
+  return response.text || "";
+}
+
+async function generateCoachReply(
+  stableSystem: string,
+  dynamicContext: string,
+  messages: Array<{ role: "user" | "assistant"; content: string }>
+): Promise<string> {
+  try {
+    const client = getClient();
+
+    const response = await client.models.generateContent({
+      model: COACH_MODEL,
+      contents: toGeminiContents(dynamicContext, messages),
+      config: {
+        temperature: 0.3,
+        maxOutputTokens: 4096,
+        systemInstruction: { role: "system", parts: [{ text: stableSystem }] },
+      },
+    });
+
+    return response.text || "";
+  } catch (err) {
+    if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
+      try {
+        console.warn("[Coach] Vertex failed, falling back to Gemini API:", err instanceof Error ? err.message : err);
+        return await generateWithGeminiApi(stableSystem, dynamicContext, messages);
+      } catch (geminiErr) {
+        console.warn("[Coach] Gemini API fallback failed:", geminiErr instanceof Error ? geminiErr.message : geminiErr);
+      }
+    }
+
+    if (!process.env.OPENAI_API_KEY) throw err;
+
+    console.warn("[Coach] Vertex failed, falling back to OpenAI:", err instanceof Error ? err.message : err);
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openaiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      { role: "system", content: stableSystem },
+      { role: "user", content: dynamicContext },
+      {
+        role: "assistant",
+        content: "Tahlilni o'qib bo'ldim. Menejerning aniq daqiqalari, jamoa taqqoslashi va ustozlar playbooki tayyor. Savolingizga javob beraman.",
+      },
+      ...(messages || []).map((m) => ({
+        role: m.role,
+        content: m.content,
+      } as OpenAI.Chat.Completions.ChatCompletionMessageParam)),
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: COACH_OPENAI_MODEL,
+      messages: openaiMessages,
+      temperature: 0.3,
+      max_tokens: 4096,
+    });
+
+    return response.choices[0]?.message?.content || "";
+  }
+}
 
 /**
  * STABLE system instruction — bu matn har chaqiruvda BIR XIL bo'ladi.
@@ -675,8 +812,6 @@ export const chat = async (req: Request, res: Response): Promise<void> => {
 
     const context = await getManagerContext(managerId || null, req.companyId!);
 
-    const client = getClient();
-
     // STABLE: kitob + qoidalar + javob formati — bir xil, implicit caching maqsadi.
     const stableSystem = buildStableSystemInstruction();
 
@@ -692,39 +827,24 @@ ${context}
 Yuqoridagi tahlilni o'qib oldim. Endi foydalanuvchi savoliga javob beraman —
 majburan "ANIQ DAQIQALAR" iqtiboslari, jamoa foizi, kitob texnikasi va ustoz namunasi bilan.`;
 
-    const history = (messages || []).map((m: any) => ({
-      role: m.role === "assistant" ? ("model" as const) : ("user" as const),
-      parts: [{ text: m.content }],
-    }));
-
-    // systemInstruction — Gemini prefix caching'i uchun alohida kanal.
-    // Dynamic tahlil va chat tarixi `contents` ichida yuboriladi.
-    const response = await client.models.generateContent({
-      model: COACH_MODEL,
-      contents: [
-        { role: "user", parts: [{ text: dynamicContext }] },
-        {
-          role: "model",
-          parts: [
-            {
-              text: "Tahlilni o'qib bo'ldim. Menejerning aniq daqiqalari, jamoa taqqoslashi va ustozlar playbooki tayyor. Savolingizga javob beraman.",
-            },
-          ],
-        },
-        ...history,
-      ],
-      config: {
-        temperature: 0.3,
-        maxOutputTokens: 4096,
-        systemInstruction: { role: "system", parts: [{ text: stableSystem }] },
-      },
-    });
-
-    const reply = response.text || "";
+    const reply = await generateCoachReply(stableSystem, dynamicContext, messages || []);
 
     success(res, { reply });
   } catch (err: any) {
-    console.error("Coach chat error:", err?.message || err);
+    console.error("Coach chat error:", {
+      message: err?.message || String(err),
+      model: COACH_MODEL,
+      project: process.env.VERTEX_PROJECT || process.env.VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || DEFAULT_VERTEX_PROJECT,
+      location: COACH_VERTEX_LOCATION,
+      hasCredentialsPath: Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS),
+      hasCredentialsJson: Boolean(
+        process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ||
+        process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+        process.env.GCP_SERVICE_ACCOUNT_JSON
+      ),
+      hasGeminiApiKey: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
+      hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
+    });
     error(res, "AI bilan bog'lanishda xatolik");
   }
 };

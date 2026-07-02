@@ -1,6 +1,5 @@
 import React, { useEffect, useRef } from "react";
-
-const API_BASE = (import.meta.env.VITE_API_URL as string || "http://localhost:5002/api").replace(/\/api$/, "");
+import { HTTP_BASE_URL } from "../services/apiBase";
 
 interface Props {
   videoPath: string; // e.g. "/videos/v1-arms-crossing-in-final.mp4"
@@ -12,7 +11,7 @@ export const CelebrationOverlay: React.FC<Props> = ({ videoPath, onEnd }) => {
   // finalVideoUrl to'liq URL (S3) bo'lishi mumkin — API_BASE qo'shilmaydi.
   const src = /^https?:\/\//.test(videoPath)
     ? videoPath
-    : `${API_BASE}${videoPath}`;
+    : `${HTTP_BASE_URL}${videoPath}`;
 
   useEffect(() => {
     ref.current?.play().catch(() => {});

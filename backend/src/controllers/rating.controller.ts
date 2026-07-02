@@ -41,10 +41,13 @@ export const getRating = async (req: Request, res: Response): Promise<void> => {
     });
     const managerIds = managers.map((m) => m.id);
     const leadStatusMap = await getLeadStatusMap();
-    const [bitrixMetrics, callSourceIds] = await Promise.all([
-      getBitrixLeadMetrics({ gte: dateFrom, lte: dateTo }, managers, leadStatusMap),
-      getCallSourceIds(companyId),
-    ]);
+    // TEZLIK: jonli Bitrix lead paginatsiyasi (getBitrixLeadMetrics) olib tashlandi.
+    // U davrdagi minglab leadni Bitrix'dan sahifama-sahifa tortib, endpointni 30-60s
+    // "Pending"da ushlab turardi (skeleton uzoq turishining sababi). Lead jadvali
+    // real-time sync (outbound webhook + 5 daq cron + reconcile) bilan Bitrix bilan
+    // AYNAN mos (diag: farq=0), shuning uchun quyidagi DB fallback hisobi AYNAN shu
+    // qiymatlarni beradi — lekin darhol, har qanday filterda.
+    const callSourceIds = await getCallSourceIds(companyId);
 
     const [audioFiles, salesLeads, callCounts] = await Promise.all([
       prisma.audioFile.findMany({
@@ -114,7 +117,6 @@ export const getRating = async (req: Request, res: Response): Promise<void> => {
 
     for (const manager of managers) {
       const managerAudioFiles = audioByManager.get(manager.id) || [];
-      const liveMetric = bitrixMetrics?.get(manager.id);
 
       const analyses = managerAudioFiles
         .map((f) => f.analysis)
@@ -154,12 +156,8 @@ export const getRating = async (req: Request, res: Response): Promise<void> => {
         manager,
         criteriaScore,
         overallScore,
-        callsCount: liveMetric
-          ? liveMetric.callSourceCount
-          : callsByManager.get(manager.id) || 0,
-        sales: liveMetric
-          ? liveMetric.salesCount
-          : salesByManager.get(manager.id) || 0,
+        callsCount: callsByManager.get(manager.id) || 0,
+        sales: salesByManager.get(manager.id) || 0,
       });
     }
 
@@ -741,13 +739,11 @@ export const getSalesLeaderboard = async (
     const y = tNow.getUTCFullYear();
     const m = tNow.getUTCMonth() + 1;
     const d = tNow.getUTCDate();
-    const todayRange = {
-      gte: tashkentStartOfDay(y, m, d),
-      lte: tashkentEndOfDay(y, m, d),
-    };
-    const [bitrixMetrics, todayBitrixMetrics, leadRows, closedDealsRating] = await Promise.all([
-      getBitrixLeadMetrics(range, managers, leadStatusMap),
-      getBitrixLeadMetrics(todayRange, managers, leadStatusMap),
+    // TEZLIK: 2× jonli Bitrix lead paginatsiyasi (davr + bugun) olib tashlandi — bu
+    // Sotuv tabini ~1 daqiqagacha "Pending"da ushlab turardi. Lead/SalesLead DB
+    // real-time sync bilan Bitrix bilan AYNAN mos (diag: farq=0), shuning uchun
+    // quyidagi DB hisobi (leadKpiSource=leads → useLeadMetrics) bir xil qiymat beradi.
+    const [leadRows, closedDealsRating] = await Promise.all([
       prisma.lead.findMany({
         where: {
           companyId,
@@ -844,17 +840,7 @@ export const getSalesLeaderboard = async (
       let qualifiedCount: number;
       let revenue: number;
       let todayCount: number;
-      const metric = bitrixMetrics?.get(mgr.id);
-      if (metric) {
-        salesCount = metric.salesCount;
-        qualifiedCount = metric.qualifiedCount;
-        revenue = metric.revenue;
-        todayCount = todayBitrixMetrics
-          ? todayBitrixMetrics.get(mgr.id)?.salesCount || 0
-          : todayConvertedLeads.filter(
-              (r) => r.responsibleManagerId === mgr.id && isFullPaymentLead(r, leadStatusMap)
-            ).length;
-      } else if (useLeadMetrics) {
+      if (useLeadMetrics) {
         const leadsFor = leadRows.filter((r) => r.responsibleManagerId === mgr.id);
         const salesFor = leadsFor.filter((r) => isFullPaymentLead(r, leadStatusMap));
         qualifiedCount = leadsFor.filter((r) => r.statusId !== "JUNK").length;

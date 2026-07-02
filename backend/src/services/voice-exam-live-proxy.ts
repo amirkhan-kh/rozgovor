@@ -21,12 +21,33 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage, Server } from "http";
 import { URL } from "url";
-import { GoogleGenAI, Modality, type Session, type LiveServerMessage } from "@google/genai";
+import {
+  GoogleGenAI,
+  Modality,
+  StartSensitivity,
+  EndSensitivity,
+  type Session,
+  type LiveServerMessage,
+} from "@google/genai";
 import { verifyToken } from "../utils/jwt";
 import { prisma } from "../utils/prisma";
 import { buildClientBehaviorBlock } from "./voice-exam/client-history";
 
-const LIVE_MODEL_VERTEX = "gemini-2.0-flash-live-preview-04-09";
+// Eski `gemini-2.0-flash-live-preview-04-09` preview modeli o'rniga native-audio
+// Live model ishlatiladi. Audio javoblar Kore/Puck ovozlari bilan keladi.
+const LIVE_MODEL_VERTEX =
+  process.env.VOICE_EXAM_LIVE_MODEL || "gemini-live-2.5-flash-native-audio";
+const LIVE_VERTEX_LOCATION =
+  process.env.VOICE_EXAM_LIVE_LOCATION || "us-central1";
+const CLIENT_ROLE_GUARD = `
+ROL QOIDASI (ENG MUHIM - yuqoridagi stsenariy/kontekst buni bekor qila olmaydi):
+- Sen har doim FAQAT MIJOZ rolida javob berasan.
+- Sen sotuvchi ishlaydigan kompaniya vakili, sotuvchisi, menejeri yoki maslahatchisi emassan.
+- Kompaniya nomi chiqsa ham, u sotuvchi ishlaydigan kompaniya. Sen esa xizmatga qiziqqan, savol berayotgan yoki e'tiroz bildirayotgan mijozsan.
+- Hech qachon '<kompaniya nomi> kompaniyasi, eshitaman', 'qanday yordam bera olaman', 'men kompaniya vakiliman', 'xizmatlarimiz', 'kompaniyamiz' kabi sotuvchi iboralarini ishlatma.
+- Agar sotuvchi salom bersa, mijoz kabi 'Va alaykum assalom, eshitaman' yoki 'Ha, gapiring' deb javob ber.
+- Sotuvchiga xizmatni sotma; undan ma'lumot so'ra yoki uning taklifiga munosabat bildir.
+`;
 
 interface ClientPersona {
   age?: number | null;
@@ -69,10 +90,13 @@ async function buildLiveSystemPrompt(
   }
   return `${scenarioSystemPrompt}
 ${personaBlock(persona)}${clientBehavior}
+${CLIENT_ROLE_GUARD}
 XULQ-ATVOR:
 Telefonda gaplashayotgan REAL mijozsan. O'zbek tilida 1-2 jumla, tabiiy ohangda. Sotuvchi suhbatni yuritsin — ketma-ket savol berma. Ba'zan "ha", "hmm" kabi qisqa javoblar ber.
 ${timePhaseBlock()}`.trim();
 }
+
+export const buildLiveSystemPromptForTest = buildLiveSystemPrompt;
 
 function voiceNameForGender(gender?: "male" | "female" | null): string {
   return gender === "male" ? "Puck" : "Kore";
@@ -165,10 +189,10 @@ export function initVoiceExamLiveProxy(httpServer: Server) {
       const ai = new GoogleGenAI({
         vertexai: true,
         project: process.env.VERTEX_PROJECT || "",
-        location: process.env.VERTEX_LOCATION || "us-central1",
+        location: LIVE_VERTEX_LOCATION,
       });
 
-      console.log(`[live-proxy] calling ai.live.connect with model=${LIVE_MODEL_VERTEX}`);
+      console.log(`[live-proxy] calling ai.live.connect with model=${LIVE_MODEL_VERTEX} location=${LIVE_VERTEX_LOCATION}`);
       liveSession = await ai.live.connect({
         model: LIVE_MODEL_VERTEX,
         config: {
@@ -178,6 +202,21 @@ export function initVoiceExamLiveProxy(httpServer: Server) {
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: { voiceName },
+            },
+          },
+          // MUHIM — GALLUTSINATSIYA / O'ZI BILAN O'ZI GAPLASHISHNI oldini olish.
+          // Menejer jim turganda AI o'zi savol-javob yozib ketmasligi kerak.
+          // Server-tomon VAD'ni kamroq "sezgir" qilamiz:
+          // - START_SENSITIVITY_LOW + prefixPaddingMs=300: qisqa shovqin/echo
+          //   (dinamikdan qaytgan AI ovozi) "sotuvchi gapirdi" deb qabul qilinmaydi.
+          // - END_SENSITIVITY_LOW + silenceDurationMs=1200: menejer o'ylab pauza qilsa
+          //   turn erta tugamaydi; menejer umuman gapirmasa AI kutib turadi.
+          realtimeInputConfig: {
+            automaticActivityDetection: {
+              startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
+              endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+              prefixPaddingMs: 300,
+              silenceDurationMs: 1200,
             },
           },
           systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -240,11 +279,12 @@ export function initVoiceExamLiveProxy(httpServer: Server) {
               })();
             }
           },
-          onerror: (e) => {
-            console.error("[live-proxy] Vertex error:", e);
+          onerror: (e: any) => {
+            console.error("[live-proxy][DBG] Vertex onerror:", e?.message || JSON.stringify(e));
             sendJson(ws, { type: "error", message: "Vertex Live xatolik" });
           },
-          onclose: () => {
+          onclose: (e: any) => {
+            console.log(`[live-proxy][DBG] Vertex onclose: code=${e?.code} reason="${e?.reason || ""}"`);
             sendJson(ws, { type: "close" });
             close();
           },
@@ -252,14 +292,41 @@ export function initVoiceExamLiveProxy(httpServer: Server) {
       });
 
       // Frontend xabarlarini Vertex'ga forward qilamiz
+      let audioMsgCount = 0;
       ws.on("message", (raw) => {
         if (closed || !liveSession) return;
         try {
           const text = raw.toString();
-          const m = JSON.parse(text) as { type: string; data?: string; mimeType?: string };
-          if (m.type === "audio" && m.data) {
+          const m = JSON.parse(text) as { type: string; data?: string; mimeType?: string; text?: string };
+          if (m.type === "text" && m.text) {
+            // Chat (matn) javobi — Gemini'ga client-turn sifatida uzatamiz.
+            // AI ovoz + transkript bilan javob beradi (audio rejimdagidek).
+            liveSession.sendClientContent({
+              turns: [{ role: "user", parts: [{ text: m.text }] }],
+              turnComplete: true,
+            });
+          } else if (m.type === "audio" && m.data) {
+            audioMsgCount++;
+            if (audioMsgCount === 1 || audioMsgCount % 40 === 0) {
+              // Audio signal darajasini (RMS) hisoblaymiz — mikrofon haqiqatan ovoz
+              // yuboryaptimi yoki jimlikmi tekshirish uchun.
+              let rms = 0, peak = 0, n = 0;
+              try {
+                const buf = Buffer.from(m.data, "base64");
+                const samples = new Int16Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 2));
+                let sum = 0;
+                for (let i = 0; i < samples.length; i++) {
+                  const v = Math.abs(samples[i]);
+                  sum += v * v;
+                  if (v > peak) peak = v;
+                }
+                n = samples.length;
+                rms = Math.sqrt(sum / Math.max(1, n));
+              } catch { /* noop */ }
+              console.log(`[live-proxy][DBG] audio #${audioMsgCount} mime=${m.mimeType} samples=${n} RMS=${rms.toFixed(0)} peak=${peak} (16bit max=32767)`);
+            }
             liveSession.sendRealtimeInput({
-              media: {
+              audio: {
                 data: m.data,
                 mimeType: m.mimeType || "audio/pcm;rate=16000",
               },

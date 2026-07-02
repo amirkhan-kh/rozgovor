@@ -32,6 +32,7 @@ import {
   activitiesService,
   ActivityItem,
 } from "../../services/activities.service";
+import { WS_BASE_URL } from "../../services/apiBase";
 import { useAuth } from "../../store/authStore";
 
 const ACCENT = "#f59e0b";
@@ -115,11 +116,6 @@ const periodToDates = (
 };
 
 // ── WebSocket listener ──────────────────────────────────
-const WS_BASE = (() => {
-  const url = (import.meta.env.VITE_API_URL as string) || "http://localhost:5000/api";
-  return url.replace(/^http/, "ws").replace(/\/api$/, "");
-})();
-
 const useActivityWS = (
   companyId: string | undefined,
   enabled: boolean,
@@ -131,7 +127,7 @@ const useActivityWS = (
   useEffect(() => {
     if (!enabled || !companyId) return;
     const token = localStorage.getItem("token") ?? "";
-    const url = `${WS_BASE}/ws?token=${token}`;
+    const url = `${WS_BASE_URL}/ws?token=${token}`;
     let dead = false;
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;

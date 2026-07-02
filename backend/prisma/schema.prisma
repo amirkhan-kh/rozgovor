@@ -859,8 +859,10 @@ model Lead {
   bitrixUserId         String? // Xom Bitrix user id
   dateCreate           DateTime
   isConverted          Boolean  @default(false) // STATUS_ID === 'CONVERTED'
-  rejectReasonId       String? // Bitrix enumeration ID (UF_CRM_1755759759770)
-  rejectReasonName     String? // "Telefonni ko'tarmadi", "DUBL", "Xato raqam" va hk
+  rejectReasonId       String? // Bitrix "Sifatsiz lid" enum ID (UF_CRM_1775192522399)
+  rejectReasonName     String? // "Noto'g'ri raqam", "Ariza qoldirmagan", "Chet el raqami" ...
+  reprocessReasonId    String? // Bitrix "Qayta Obrabotka" enum ID (UF_CRM_1744108566958)
+  reprocessReasonName  String? // "Narxi qimmat", "Vaqti yo'q", "Uydagilari ruxsat bermadi" ...
   productId            String?
   syncedAt             DateTime @default(now()) @updatedAt
 
@@ -873,6 +875,7 @@ model Lead {
   @@index([companyId, isConverted, dateCreate])
   @@index([companyId, responsibleManagerId])
   @@index([companyId, statusId, rejectReasonName])
+  @@index([companyId, reprocessReasonName])
   @@index([companyId, productId])
 }
 

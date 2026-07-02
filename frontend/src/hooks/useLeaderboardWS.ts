@@ -1,16 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { WS_BASE_URL } from "../services/apiBase";
 
 export interface SaleEvent {
   managerId: string;
   managerName: string;
   videoUrl: string;
 }
-
-const WS_BASE = (() => {
-  const api = import.meta.env.VITE_API_URL as string || "http://localhost:5002/api";
-  return api.replace(/^http/, "ws").replace(/\/api$/, "");
-})();
 
 export function useLeaderboardWS(
   companyId: string | undefined,
@@ -25,7 +21,7 @@ export function useLeaderboardWS(
     if (!enabled || !companyId) return;
 
     const token = localStorage.getItem("token") ?? "";
-    const url = `${WS_BASE}/ws?token=${token}`;
+    const url = `${WS_BASE_URL}/ws?token=${token}`;
     let ws: WebSocket;
     let dead = false;
     let retryTimer: ReturnType<typeof setTimeout>;

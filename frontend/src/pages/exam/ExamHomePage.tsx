@@ -19,6 +19,57 @@ const difficultyLabels: Record<string, string> = {
   hard: "Qiyin",
 };
 
+/* ───── Pro-audit uslubidagi statistika kartasi (AuditPage bilan bir xil) ───── */
+const StatCard: React.FC<{
+  label: string;
+  value: React.ReactNode;
+  suffix?: string;
+  icon: React.ReactNode;
+  accentColor: string;
+  hint?: string;
+}> = ({ label, value, suffix, icon, accentColor, hint }) => (
+  <div
+    className="relative overflow-hidden rounded-2xl p-5 border"
+    style={{ backgroundColor: "var(--color-card-bg)", borderColor: "var(--color-border)" }}
+  >
+    <div
+      className="absolute -top-10 -right-10 w-32 h-32 rounded-full opacity-15 blur-2xl"
+      style={{ background: accentColor }}
+    />
+    <div className="relative flex items-start justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <p
+          className="text-[11px] font-semibold uppercase tracking-wider"
+          style={{ color: "var(--text-secondary)", opacity: 0.75 }}
+        >
+          {label}
+        </p>
+        <div className="mt-2 flex items-baseline gap-1.5 whitespace-nowrap">
+          <span className="text-2xl sm:text-3xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            {value}
+          </span>
+          {suffix && (
+            <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+              {suffix}
+            </span>
+          )}
+        </div>
+        {hint && (
+          <p className="text-xs mt-1.5" style={{ color: "var(--text-secondary)", opacity: 0.7 }}>
+            {hint}
+          </p>
+        )}
+      </div>
+      <div
+        className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
+        style={{ backgroundColor: `${accentColor}18`, color: accentColor }}
+      >
+        {icon}
+      </div>
+    </div>
+  </div>
+);
+
 /* ───── SHARED: ALL RESULTS (boss + ROP) ───── */
 const AllResultsView: React.FC = () => {
   const navigate = useNavigate();
@@ -824,30 +875,32 @@ const ManagerExamView: React.FC<{ embedded?: boolean }> = ({ embedded = false })
         </div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:gap-4 mb-6">
-        <div className="p-3 md:p-4 rounded-xl border border-border" style={{ backgroundColor: "var(--color-card-bg)" }}>
-          <div className="flex items-center gap-2 text-xs text-secondary mb-1">
-            <Trophy size={14} /> Imtihonlar
-          </div>
-          <div className="text-xl md:text-2xl font-bold">{completedCount}</div>
-        </div>
-        <div className="p-3 md:p-4 rounded-xl border border-border" style={{ backgroundColor: "var(--color-card-bg)" }}>
-          <div className="flex items-center gap-2 text-xs text-secondary mb-1">
-            <TrendingUp size={14} /> O'rtacha ball
-          </div>
-          <div className="text-xl md:text-2xl font-bold">{avgScore}/100</div>
-        </div>
-        <div className="p-3 md:p-4 rounded-xl border border-border" style={{ backgroundColor: "var(--color-card-bg)" }}>
-          <div className="flex items-center gap-2 text-xs text-secondary mb-1">
-            <Clock size={14} /> Oxirgi
-          </div>
-          <div className="text-lg md:text-2xl font-bold">
-            {history[0]?.completedAt
+      {/* Stats — pro-audit uslubidagi kartalar */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+        <StatCard
+          label="Imtihonlar"
+          value={completedCount}
+          icon={<Trophy size={18} />}
+          accentColor="#6366f1"
+          hint="Topshirilgan"
+        />
+        <StatCard
+          label="O'rtacha ball"
+          value={avgScore}
+          suffix="/100"
+          icon={<TrendingUp size={18} />}
+          accentColor="#10b981"
+        />
+        <StatCard
+          label="Oxirgi imtihon"
+          value={
+            history[0]?.completedAt
               ? new Date(history[0].completedAt).toLocaleDateString("uz-UZ", { day: "2-digit", month: "2-digit" })
-              : "—"}
-          </div>
-        </div>
+              : "—"
+          }
+          icon={<Clock size={18} />}
+          accentColor="#0ea5e9"
+        />
       </div>
 
       {/* Auto-generated exam preview */}
@@ -869,14 +922,14 @@ const ManagerExamView: React.FC<{ embedded?: boolean }> = ({ embedded = false })
           )}
         </div>
         {!examEnabled ? (
-          <div className="rounded-xl border border-border p-6 text-center" style={{ backgroundColor: "var(--color-card-bg)" }}>
+          <div className="rounded-2xl border border-border p-6 text-center" style={{ backgroundColor: "var(--color-card-bg)" }}>
             <AlertTriangle size={32} className="mx-auto mb-2 text-amber-500" />
             <p className="text-sm text-secondary">
               Imtihon sizga hali ochilmagan. Rahbaringiz bilan bog'laning.
             </p>
           </div>
         ) : !pending ? (
-          <div className="rounded-xl border border-border p-6 text-center" style={{ backgroundColor: "var(--color-card-bg)" }}>
+          <div className="rounded-2xl border border-border p-6 text-center" style={{ backgroundColor: "var(--color-card-bg)" }}>
             <Target size={32} className="mx-auto mb-2 text-secondary/60" />
             <p className="text-sm text-secondary">
               Sizga imtihon tayinlanmagan. Rahbaringiz tayinlashini kuting.
@@ -884,12 +937,17 @@ const ManagerExamView: React.FC<{ embedded?: boolean }> = ({ embedded = false })
           </div>
         ) : (
           <div
-            className="rounded-xl border-2 p-5"
+            className="relative overflow-hidden rounded-2xl border-2 p-5"
             style={{
               backgroundColor: "var(--color-card-bg)",
               borderColor: `${difficultyColors[pending.scenario.difficulty]}60`,
             }}
           >
+            {/* Audit uslubidagi accent blob */}
+            <div
+              className="absolute -top-12 -right-12 w-40 h-40 rounded-full opacity-15 blur-2xl pointer-events-none"
+              style={{ background: difficultyColors[pending.scenario.difficulty] }}
+            />
             <div className="flex items-start gap-4 mb-4">
               <div className="text-4xl">{pending.scenario.icon}</div>
               <div className="flex-1 min-w-0">
@@ -974,7 +1032,7 @@ const ManagerExamView: React.FC<{ embedded?: boolean }> = ({ embedded = false })
               <button
                 key={h.id}
                 onClick={() => h.status === "completed" ? navigate(`/exam/result/${h.id}`) : null}
-                className={`w-full text-left p-3 rounded-lg border transition-all flex items-center gap-3 ${
+                className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-center gap-3 ${
                   h.status === "completed" ? "hover:shadow-md cursor-pointer" : "opacity-70 cursor-default"
                 }`}
                 style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-card-bg)" }}

@@ -53,22 +53,22 @@ export class GeminiLiveExamClient {
 
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      let opened = false;
+      let socketOpened = false;
+      let serverOpened = false;
       const ws = new WebSocket(this.wsUrl);
       this.ws = ws;
 
       ws.onopen = () => {
-        // Server "open" xabari kelsa onOpen events bilan trigger qilinadi.
-        // Connect promise faqat ws shartlilik o'rnatilganida resolve qilinadi.
-        // Ammo ba'zi serverlar darhol "open" yubormaydi — shuning uchun
-        // ws.onopen darhol resolve qilamiz, qolgan tarafni server xabarida hal qilamiz.
-        opened = true;
-        resolve();
+        socketOpened = true;
       };
 
       ws.onmessage = (e: MessageEvent<string>) => {
         try {
           const msg = JSON.parse(typeof e.data === "string" ? e.data : "");
+          if (msg.type === "open" && !serverOpened) {
+            serverOpened = true;
+            resolve();
+          }
           this.handleMessage(msg);
         } catch (err) {
           this.events.onError(err instanceof Error ? err : new Error(String(err)));
@@ -76,13 +76,16 @@ export class GeminiLiveExamClient {
       };
 
       ws.onerror = () => {
-        if (!opened) {
+        if (!serverOpened) {
           reject(new Error("WebSocket ulanishida xatolik"));
         }
         this.events.onError(new Error("WebSocket error"));
       };
 
       ws.onclose = () => {
+        if (socketOpened && !serverOpened) {
+          reject(new Error("AI mijoz bilan ulanish yopildi"));
+        }
         if (!this.closed) this.events.onClose();
       };
     });
@@ -127,6 +130,19 @@ export class GeminiLiveExamClient {
         data: arrayBufferToBase64(pcm16kMono),
         mimeType: "audio/pcm;rate=16000",
       }));
+    } catch (err) {
+      this.events.onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  // Matn (chat) javobini yuborish — backend buni Gemini'ga client-turn sifatida
+  // uzatadi; AI ovoz + transkript bilan javob beradi (ovozli rejimdagidek).
+  sendText(text: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.closed) return;
+    const t = text.trim();
+    if (!t) return;
+    try {
+      this.ws.send(JSON.stringify({ type: "text", text: t }));
     } catch (err) {
       this.events.onError(err instanceof Error ? err : new Error(String(err)));
     }

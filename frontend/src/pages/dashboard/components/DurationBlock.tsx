@@ -31,12 +31,10 @@ const formatDuration = (seconds: number): string => {
 };
 
 const formatTotalDuration = (seconds: number): string => {
-  const days = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
+  const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.round(seconds % 60);
-  const hms = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return days > 0 ? `${days} kun ${hms}` : hms;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 };
 
 const ACCENT = "#3b5ef5";
@@ -52,7 +50,11 @@ const tooltipStyle = {
   labelStyle: { color: "#9ca3af" },
 };
 
-const DurationBlock: React.FC<DurationBlockProps> = ({ stats, managerName, managerDurations }) => {
+const DurationBlock: React.FC<DurationBlockProps> = ({
+  stats,
+  managerName,
+  managerDurations,
+}) => {
   const barData = (managerDurations || []).map((m) => ({
     name: m.name,
     duration: m.avgDuration,

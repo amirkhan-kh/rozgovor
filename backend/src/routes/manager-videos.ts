@@ -38,29 +38,29 @@ const musicUpload = multer({
   limits: { fileSize: 60 * 1024 * 1024 },
 });
 
-router.use(authMiddleware);
-
 // ─── /api/managers/:id/... ───────────────────────────────────────────────
 router.post(
   "/managers/:id/photo",
+  authMiddleware,
   photoUpload.single("photo"),
   asyncHandler(postManagerPhoto),
 );
-router.post("/managers/:id/generate-videos", asyncHandler(postGenerateVideos));
-router.get("/managers/:id/videos", asyncHandler(listManagerVideos));
+router.post("/managers/:id/generate-videos", authMiddleware, asyncHandler(postGenerateVideos));
+router.get("/managers/:id/videos", authMiddleware, asyncHandler(listManagerVideos));
 
 // ─── /api/manager-videos/:videoId/... ────────────────────────────────────
-router.get("/manager-videos/:videoId", asyncHandler(getVideoDetail));
+router.get("/manager-videos/:videoId", authMiddleware, asyncHandler(getVideoDetail));
 router.post(
   "/manager-videos/:videoId/music",
+  authMiddleware,
   musicUpload.single("music"),
   asyncHandler(postVideoMusic),
 );
-router.put("/manager-videos/:videoId/music", asyncHandler(putVideoMusic));
-router.post("/manager-videos/:videoId/render", asyncHandler(postVideoRender));
-router.delete("/manager-videos/:videoId", asyncHandler(deleteVideo));
+router.put("/manager-videos/:videoId/music", authMiddleware, asyncHandler(putVideoMusic));
+router.post("/manager-videos/:videoId/render", authMiddleware, asyncHandler(postVideoRender));
+router.delete("/manager-videos/:videoId", authMiddleware, asyncHandler(deleteVideo));
 
 // Manual poll trigger — faqat admin (company login)
-router.post("/manager-videos/poll-now", asyncHandler(postPollNow));
+router.post("/manager-videos/poll-now", authMiddleware, asyncHandler(postPollNow));
 
 export default router;

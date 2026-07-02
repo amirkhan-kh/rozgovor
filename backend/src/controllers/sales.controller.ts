@@ -54,6 +54,58 @@ async function bitrixFetchAll<T>(
   return items;
 }
 
+// Rate-limitga chidamli bitrixCall — 503 / QUERY_LIMIT_EXCEEDED da backoff bilan
+// qayta uriladi (parallel pager burst'i uchun kerak).
+async function bitrixCallRetry(
+  method: string,
+  payload: Record<string, unknown>,
+  attempts = 4
+): Promise<{ result?: unknown; total?: number; next?: number }> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const resp = await bitrixCall(method, payload);
+      if ((resp as { error?: string }).error === "QUERY_LIMIT_EXCEEDED") {
+        throw new Error("QUERY_LIMIT_EXCEEDED");
+      }
+      return resp;
+    } catch (e) {
+      lastErr = e;
+      const backoff = 300 * (i + 1) + Math.floor(Math.random() * 200);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
+
+// Parallel offset-pager: 1-so'rov `total`ni beradi, qolgan sahifalar chegaralangan
+// konkurentlik bilan BARAVAR olinadi. Ketma-ket offset-paging (start+=50) katta
+// hajmda tarmoq round-trip'lariga bog'liq bo'lib sekin — parallel ~konkurentlik× tez.
+// Race natijasida dublikat/skip bo'lishi mumkin (widget approx, 60s cache) → ID Set dedup qiladi.
+async function bitrixParallelFetchAll<T>(
+  method: string,
+  baseFilter: Record<string, unknown>,
+  select: string[],
+  concurrency = 8
+): Promise<T[]> {
+  const first = await bitrixCallRetry(method, { filter: baseFilter, select, start: 0 });
+  const firstBatch = (first.result as T[]) || [];
+  const total = first.total ?? firstBatch.length;
+  const items: T[] = [...firstBatch];
+  if (firstBatch.length === 0 || total <= firstBatch.length) return items;
+
+  const offsets: number[] = [];
+  for (let s = 50; s < total; s += 50) offsets.push(s);
+  for (let i = 0; i < offsets.length; i += concurrency) {
+    const chunk = offsets.slice(i, i + concurrency);
+    const results = await Promise.all(
+      chunk.map((s) => bitrixCallRetry(method, { filter: baseFilter, select, start: s }))
+    );
+    for (const r of results) items.push(...((r.result as T[]) || []));
+  }
+  return items;
+}
+
 // Bitrix SOURCE (Lead istovchnik) map cache — crm.status.list ENTITY_ID=SOURCE
 // 10 daqiqa cache qilinadi
 let sourceMapCache: { map: Map<string, string>; expiresAt: number } | null = null;
@@ -1078,16 +1130,25 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
     const cycleLeadDates = cycleOrigLeadIds.length > 0
       ? await prisma.lead.findMany({
           where: { companyId, bitrixLeadId: { in: cycleOrigLeadIds } },
-          select: { bitrixLeadId: true, dateCreate: true },
+          select: { bitrixLeadId: true, dateCreate: true, reprocessReasonName: true },
         })
       : [];
     const leadDateByBitrixId = new Map<number, Date>();
-    for (const l of cycleLeadDates) leadDateByBitrixId.set(l.bitrixLeadId, l.dateCreate);
+    // "Qayta Obrabotka" (reprocessReasonName != null) bo'lgan lidlar — sotuv sikli
+    // hisobidan CHIQARILADI. Sikl faqat SOF, qayta ishlovga tushmagan lidlar sotuvi
+    // uchun hisoblanadi (o'lik lidni qayta jonlantirish o'rtachani sun'iy cho'zadi).
+    const reprocessedLeadIds = new Set<number>();
+    for (const l of cycleLeadDates) {
+      leadDateByBitrixId.set(l.bitrixLeadId, l.dateCreate);
+      if (l.reprocessReasonName) reprocessedLeadIds.add(l.bitrixLeadId);
+    }
 
     const cycleDays: number[] = [];
     const DAY_MS = 1000 * 60 * 60 * 24;
     for (const s of saleRows) {
       if (!s.closedAt) continue;
+      // Qayta ishlovga tushgan lid sotuvini o'tkazib yuboramiz
+      if (s.originalLeadId != null && reprocessedLeadIds.has(s.originalLeadId)) continue;
       // Lid tushgan vaqt: original Lead.dateCreate, topilmasa deal leadCreatedAt'ga qaytamiz
       const startAt =
         (s.originalLeadId != null && leadDateByBitrixId.get(s.originalLeadId)) ||
@@ -1404,6 +1465,33 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         count: r._count.bitrixLeadId,
       }));
 
+    // ─── 7b) Qayta ishlov berish sabablari ("Qayta Obrabotka" — Lead.reprocessReasonName) ──
+    // Rad etish (JUNK) bilan bir xil mexanizm, alohida Bitrix enum field'dan sync qilinadi.
+    const leadReprocessRows = await prisma.lead.groupBy({
+      by: ["reprocessReasonName"],
+      where: (() => {
+        const w: Record<string, unknown> = {
+          companyId,
+          reprocessReasonName: { not: null },
+        };
+        if (dateRange) w.dateCreate = dateRange;
+        if (managerIds) w.responsibleManagerId = { in: managerIds };
+        if (sourceIds) w.sourceId = { in: sourceIds };
+        if (leadBitrixIdsFromPipelines)
+          w.bitrixLeadId = { in: leadBitrixIdsFromPipelines };
+        return w;
+      })(),
+      _count: { bitrixLeadId: true },
+      orderBy: { _count: { bitrixLeadId: "desc" } },
+    });
+
+    const reprocessBreakdown = leadReprocessRows
+      .filter((r) => r.reprocessReasonName && r._count.bitrixLeadId > 0)
+      .map((r) => ({
+        name: r.reprocessReasonName as string,
+        count: r._count.bitrixLeadId,
+      }));
+
     success(res, {
       period: {
         key: period,
@@ -1436,6 +1524,7 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       byManager,
       leadBreakdown,
       rejectionBreakdown,
+      reprocessBreakdown,
     });
   } catch (err) {
     console.error("Sales overview error:", err);
@@ -1879,9 +1968,9 @@ export const getSalesTaskStats = async (
     const m = tNow.getUTCMonth() + 1;
     const d = tNow.getUTCDate();
 
-    const nowIso = new Date().toISOString();
-    const todayStartIso = tashkentStartOfDay(y, m, d).toISOString();
-    const todayEndIso = tashkentEndOfDay(y, m, d).toISOString();
+    const nowMs = Date.now();
+    const todayStartMs = tashkentStartOfDay(y, m, d).getTime();
+    const todayEndMs = tashkentEndOfDay(y, m, d).getTime();
 
     // Manager filter (bitrix_123 → 123)
     const managerIds = parseManagerIds(req.query.managerIds);
@@ -1906,74 +1995,73 @@ export const getSalesTaskStats = async (
       return base;
     };
 
-    // Ochiq deal'larni avval olamiz — task hisobini shu deal'lar bilan cheklaymiz.
-    // Pipeline filter qo'llaniladi (agar berilgan bo'lsa) — Bitrix CRM widget bilan mos.
-    const dealsFilter: Record<string, unknown> = { STAGE_SEMANTIC_ID: "P" };
-    if (pipelineIds && pipelineIds.length > 0) dealsFilter.CATEGORY_ID = pipelineIds;
-    if (bitrixUserIds && bitrixUserIds.length > 0) dealsFilter.ASSIGNED_BY_ID = bitrixUserIds;
-    const openDeals = await bitrixFetchAll<{ ID: string }>("crm.deal.list", {
-      filter: dealsFilter,
-      select: ["ID"],
-    });
-    const openDealIds = new Set(openDeals.map((x) => String(x.ID)));
-    const openDealIdsArr = Array.from(openDealIds).map((id) => Number(id)).filter((n) => !isNaN(n));
+    // ── TESKARI (fast) yo'l ──────────────────────────────────────────────
+    // 6000+ ochiq deal'ni ID bo'yicha sanab chiqish Bitrix rate-limit (~2 req/s,
+    // ~50 burst) tufayli ~60s+ oladi (130 sahifa). Uni butunlay o'tkazib yuboramiz:
+    //   1) ochiq deal SONI — bitta so'rov (total), enumeratsiyasiz;
+    //   2) barcha ochiq deal-zadach'lar (odatda yuzlab, ~15 sahifa);
+    //   3) faqat o'sha zadach egasi deal'lar OCHIQ (P) ekanini tekshiramiz (~13 sahifa).
+    // → ~30 so'rov (145 emas), burst budjetiga sig'adi, ~5–10s.
+    const dealFilter: Record<string, unknown> = { STAGE_SEMANTIC_ID: "P" };
+    if (pipelineIds && pipelineIds.length > 0) dealFilter.CATEGORY_ID = pipelineIds;
+    if (bitrixUserIds && bitrixUserIds.length > 0) dealFilter.ASSIGNED_BY_ID = bitrixUserIds;
 
-    // Task widget hisoblari — faqat shu ochiq deal'lardagi zadach'lar (OWNER_TYPE_ID=2)
-    // Bitrix API'da OWNER_ID array bo'lib filter qo'yiladi: @OWNER_ID
-    const dealOwnerFilter: Record<string, unknown> = openDealIdsArr.length > 0
-      ? { OWNER_TYPE_ID: 2, "@OWNER_ID": openDealIdsArr }
-      : { OWNER_TYPE_ID: 2, OWNER_ID: -1 };
-
-    // 1) Umumiy ochiq zadach
-    const totalResp = await bitrixCall("crm.activity.list", {
-      filter: withMgr({ COMPLETED: "N", ...dealOwnerFilter }),
+    // 1) Ochiq deal soni — faqat total (birinchi sahifa yetarli)
+    const dealCountResp = await bitrixCallRetry("crm.deal.list", {
+      filter: dealFilter,
       select: ["ID"],
       start: 0,
     });
-    const totalOpen = totalResp.total || 0;
+    const openDealsCount = dealCountResp.total || 0;
 
-    // 2) Prosrochenniy
-    const overdueResp = await bitrixCall("crm.activity.list", {
-      filter: withMgr({ COMPLETED: "N", "<DEADLINE": nowIso, ...dealOwnerFilter }),
-      select: ["ID"],
-      start: 0,
-    });
-    const overdue = overdueResp.total || 0;
+    // 2) Barcha ochiq deal-zadach'lar (OWNER_TYPE_ID=2) — deal bo'yicha cheklamaymiz
+    const allDealTasks = await bitrixParallelFetchAll<{
+      ID: string;
+      OWNER_ID: string;
+      DEADLINE?: string;
+    }>("crm.activity.list", withMgr({ COMPLETED: "N", OWNER_TYPE_ID: 2 }), [
+      "ID",
+      "OWNER_ID",
+      "DEADLINE",
+    ]);
 
-    // 3) Bugungi
-    const todayResp = await bitrixCall("crm.activity.list", {
-      filter: withMgr({
-        COMPLETED: "N",
-        ">=DEADLINE": todayStartIso,
-        "<=DEADLINE": todayEndIso,
-        ...dealOwnerFilter,
-      }),
-      select: ["ID"],
-      start: 0,
-    });
-    const today = todayResp.total || 0;
-
-    // 4) Bez zadach
-    const activities = await bitrixFetchAll<{ OWNER_ID: string }>(
-      "crm.activity.list",
-      {
-        filter: withMgr({ COMPLETED: "N", ...dealOwnerFilter }),
-        select: ["OWNER_ID"],
-      }
+    // 3) Zadach egasi deal'lar ichidan OCHIQ (P) + filterlarga mos bo'lganlarini olamiz
+    const ownerIds = Array.from(
+      new Set(allDealTasks.map((a) => Number(a.OWNER_ID)).filter((n) => !isNaN(n)))
     );
-    const dealsWithTask = new Set(activities.map((a) => String(a.OWNER_ID)));
-
-    let dealsWithoutTask = 0;
-    for (const id of openDealIds) {
-      if (!dealsWithTask.has(id)) dealsWithoutTask += 1;
+    let openOwnerSet = new Set<string>();
+    if (ownerIds.length > 0) {
+      const openOwners = await bitrixParallelFetchAll<{ ID: string }>(
+        "crm.deal.list",
+        { ...dealFilter, "@ID": ownerIds },
+        ["ID"]
+      );
+      openOwnerSet = new Set(openOwners.map((d) => String(d.ID)));
     }
+
+    // 4) Metrikalar — faqat ochiq deal'dagi zadach'lar (xotirada)
+    let totalOpen = 0;
+    let overdue = 0;
+    let today = 0;
+    for (const a of allDealTasks) {
+      if (!openOwnerSet.has(String(a.OWNER_ID))) continue;
+      totalOpen += 1;
+      // DEADLINE ISO (tz offset bilan) — absolyut instant sifatida parse qilamiz
+      const dl = a.DEADLINE ? new Date(a.DEADLINE).getTime() : NaN;
+      if (!Number.isNaN(dl)) {
+        if (dl < nowMs) overdue += 1;
+        if (dl >= todayStartMs && dl <= todayEndMs) today += 1;
+      }
+    }
+    // Zadach qo'yilgan ochiq deal = openOwnerSet (har biri ≥1 ochiq zadachga ega)
+    const dealsWithoutTask = Math.max(0, openDealsCount - openOwnerSet.size);
 
     const result = {
       totalOpen,
       overdue,
       today,
       dealsWithoutTask,
-      openDeals: openDealIds.size,
+      openDeals: openDealsCount,
     };
     cache.set(cacheKey, result, 60 * 1000); // 60 soniya
     success(res, result);

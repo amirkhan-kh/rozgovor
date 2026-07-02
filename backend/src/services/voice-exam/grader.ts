@@ -11,7 +11,15 @@ import { knowledgeBase } from "./conversation";
 import type { ExamMessage } from "./conversation";
 
 const VERTEX_PROJECT = process.env.VERTEX_PROJECT || "big-quanta-469517-h6";
-const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "us-central1";
+// DIQQAT: @google-cloud/vertexai SDK `global` locationni QO'LLAB-QUVVATLAMAYDI.
+// U `https://global-aiplatform.googleapis.com` manziliga so'rov yuboradi (mavjud emas),
+// HTML xato sahifasini oladi va uni JSON deb o'qishga urinib
+// "Unexpected token '<', "<!DOCTYPE"... is not valid JSON" xatosini beradi —
+// bu imtihonni "Yakunlash"da 500 xatoga sabab bo'lardi.
+// gemini-2.5-flash us-central1'da mavjud, shuning uchun `global` bo'lsa shunga tushiramiz.
+const RAW_VERTEX_LOCATION = process.env.VERTEX_LOCATION || "us-central1";
+const VERTEX_LOCATION =
+  RAW_VERTEX_LOCATION === "global" ? "us-central1" : RAW_VERTEX_LOCATION;
 const MODEL = "gemini-2.5-flash";
 
 export interface GradingResult {

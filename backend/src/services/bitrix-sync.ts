@@ -213,6 +213,43 @@ function leadReason(
   return { id, name: reasons.get(id) || null };
 }
 
+// Bitrix LEAD "Qayta Obrabotka" (qayta ishlov berish) sababi — "Sifatsiz lid"dan ALOHIDA
+// enum field (rozgovoruz portali). Jonli crm.lead.fields'dan tasdiqlangan (2026-07):
+//   377=Birinchi qo'ng'iroqdan so'ng aloqa yoq, 859=Narxi qimmat, 639=Oflayn o'qishi xohladi,
+//   861=Vaqti yo'q, 849=Eski baza, 1133=Umuman bog'lanib bo'lmadi, 1139=Uydagilari ruxsat bermadi,
+//   1145=Boshqa.
+const LEAD_REPROCESS_FIELD = "UF_CRM_1744108566958";
+
+let leadReprocessMapCache: { map: Map<string, string>; expiresAt: number } | null = null;
+async function getLeadReprocessMap(): Promise<Map<string, string>> {
+  if (leadReprocessMapCache && leadReprocessMapCache.expiresAt > Date.now()) {
+    return leadReprocessMapCache.map;
+  }
+  const map = new Map<string, string>();
+  try {
+    const resp = await bitrixCall("crm.lead.fields");
+    const fields = (resp.result as Record<string, any>) || {};
+    const f = fields[LEAD_REPROCESS_FIELD];
+    for (const it of (f?.items as Array<{ ID: unknown; VALUE: unknown }>) || []) {
+      map.set(String(it.ID), String(it.VALUE));
+    }
+  } catch {
+    // map bo'sh qoladi — reprocessReasonName null bo'ladi (buzilmaydi)
+  }
+  leadReprocessMapCache = { map, expiresAt: Date.now() + 10 * 60 * 1000 };
+  return map;
+}
+
+function leadReprocess(
+  l: Record<string, unknown>,
+  reasons: Map<string, string>
+): { id: string | null; name: string | null } {
+  const raw = l[LEAD_REPROCESS_FIELD];
+  const id = raw === null || raw === undefined || raw === "" ? null : String(raw);
+  if (!id) return { id: null, name: null };
+  return { id, name: reasons.get(id) || null };
+}
+
 // OPPORTUNITY'ni CURRENCY_ID bo'yicha UZS'ga o'tkazadi.
 function oppToUzs(
   opportunity: unknown,
@@ -425,11 +462,13 @@ function buildLeadCore(
   l: Record<string, unknown>,
   managerId: string | null,
   statusMap: Map<string, string>,
-  reasons: Map<string, string>
+  reasons: Map<string, string>,
+  reprocessReasons: Map<string, string>
 ) {
   const statusId = (l.STATUS_ID as string) || null;
   const statusName = statusId ? statusMap.get(statusId) || null : null;
   const reason = leadReason(l, reasons);
+  const reprocess = leadReprocess(l, reprocessReasons);
   return {
     title: (l.TITLE as string) || null,
     statusId,
@@ -442,6 +481,8 @@ function buildLeadCore(
     isConverted: isFullPaymentStatus(statusId, statusName),
     rejectReasonId: reason.id,
     rejectReasonName: reason.name,
+    reprocessReasonId: reprocess.id,
+    reprocessReasonName: reprocess.name,
   };
 }
 
@@ -452,7 +493,10 @@ async function syncRecentLeads(
   const statusMap = await getLeadStatusMap();
   let upserted = 0;
   let start = 0;
-  const reasons = await getLeadReasonMap();
+  const [reasons, reprocessReasons] = await Promise.all([
+    getLeadReasonMap(),
+    getLeadReprocessMap(),
+  ]);
 
   while (true) {
     const resp = await bitrixCall("crm.lead.list", {
@@ -467,6 +511,7 @@ async function syncRecentLeads(
         "DATE_CREATE",
         "DATE_MODIFY",
         LEAD_REASON_FIELD,
+        LEAD_REPROCESS_FIELD,
       ],
       order: { DATE_MODIFY: "ASC" },
       start,
@@ -479,7 +524,7 @@ async function syncRecentLeads(
       if (Number.isNaN(bitrixLeadId)) continue;
       const bitrixUserId = l.ASSIGNED_BY_ID ? String(l.ASSIGNED_BY_ID) : null;
       const managerId = await ensureManager(companyId, bitrixUserId);
-      const core = buildLeadCore(l, managerId, statusMap, reasons);
+      const core = buildLeadCore(l, managerId, statusMap, reasons, reprocessReasons);
 
       await prisma.lead.upsert({
         where: { companyId_bitrixLeadId: { companyId, bitrixLeadId } },
@@ -538,9 +583,10 @@ export async function upsertLeadById(
   companyId: string,
   leadId: number
 ): Promise<boolean> {
-  const [resp, reasons, statusMap] = await Promise.all([
+  const [resp, reasons, reprocessReasons, statusMap] = await Promise.all([
     bitrixCall("crm.lead.get", { id: leadId }),
     getLeadReasonMap(),
+    getLeadReprocessMap(),
     getLeadStatusMap(),
   ]);
   const l = resp.result as Record<string, unknown> | undefined;
@@ -550,7 +596,7 @@ export async function upsertLeadById(
   if (Number.isNaN(bitrixLeadId)) return false;
   const bitrixUserId = l.ASSIGNED_BY_ID ? String(l.ASSIGNED_BY_ID) : null;
   const managerId = await ensureManager(companyId, bitrixUserId);
-  const core = buildLeadCore(l, managerId, statusMap, reasons);
+  const core = buildLeadCore(l, managerId, statusMap, reasons, reprocessReasons);
 
   await prisma.lead.upsert({
     where: { companyId_bitrixLeadId: { companyId, bitrixLeadId } },

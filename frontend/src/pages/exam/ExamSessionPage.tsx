@@ -7,14 +7,19 @@ import {
   CheckCircle2,
   Loader2,
   AlertTriangle,
-  PhoneOff,
-  Sparkles,
+  Send,
 } from "lucide-react";
 import { voiceExamService } from "../../services/voice-exam.service";
-import { VoiceSphere, type VoiceSphereStatus } from "../../components/exam/VoiceSphere";
-import { TranscriptStream, type TranscriptMessage } from "../../components/exam/TranscriptStream";
-import { AudioBars } from "../../components/exam/AudioBars";
+import { MicCheck } from "../../components/exam/MicCheck";
 import { useGeminiLiveExam } from "../../hooks/useGeminiLiveExam";
+
+const MIC_ID_KEY = "exam-mic-id";
+
+interface ChatMsg {
+  role: "salesperson" | "client";
+  text: string;
+  ts: number;
+}
 
 interface CachedExamData {
   scenario: { name: string; difficulty: string };
@@ -44,15 +49,23 @@ const ExamSessionPage: React.FC = () => {
     age?: number | null;
     gender?: "male" | "female" | null;
   }>({});
-  const [initialMessages, setInitialMessages] = useState<TranscriptMessage[]>([]);
+  const [initialMessages, setInitialMessages] = useState<ChatMsg[]>([]);
   const [pageStatus, setPageStatus] = useState<"loading" | "ready" | "ended">("loading");
   const [confirmModal, setConfirmModal] = useState<"finish" | "abandon" | null>(null);
   const [isGrading, setIsGrading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  // Mikrofon tekshiruvi: imtihon faqat mikrofon tasdiqlangandan keyin boshlanadi.
+  const [micConfirmed, setMicConfirmed] = useState(false);
+  const [selectedMicId, setSelectedMicId] = useState<string | undefined>(
+    () => localStorage.getItem(MIC_ID_KEY) || undefined
+  );
+  const [chatText, setChatText] = useState("");
+  const [awaitingClientReply, setAwaitingClientReply] = useState(false);
 
   const startedAtRef = useRef<number>(Date.now());
   const autoFinishedRef = useRef(false);
+  const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -82,9 +95,9 @@ const ExamSessionPage: React.FC = () => {
             navigate(`/exam/result/${id}`);
             return;
           }
-          if (r.messages) {
+          if (Array.isArray(r.messages)) {
             setInitialMessages(
-              (r.messages as TranscriptMessage[]).map((m) => ({
+              (r.messages as ChatMsg[]).map((m) => ({
                 role: m.role,
                 text: m.text,
                 ts: m.ts,
@@ -107,27 +120,56 @@ const ExamSessionPage: React.FC = () => {
 
   const {
     status: liveStatus,
-    micLevel,
-    aiLevel,
-    frequencyData,
     lastUserText,
     lastAiText,
     messages: liveMessages,
     error: liveError,
     muted,
+    micSilent,
+    sendText,
     toggleMute,
     disconnect,
-  } = useGeminiLiveExam({ sessionId: id, enabled: pageStatus === "ready" });
+  } = useGeminiLiveExam({
+    sessionId: id,
+    enabled: pageStatus === "ready" && micConfirmed,
+    deviceId: selectedMicId,
+  });
 
-  // Timer
+  // Timer — faqat mikrofon tasdiqlanib, imtihon haqiqatan boshlangach
   useEffect(() => {
-    if (pageStatus !== "ready") return;
+    if (pageStatus !== "ready" || !micConfirmed) return;
     startedAtRef.current = Date.now();
     const it = setInterval(() => {
       setElapsedMs(Date.now() - startedAtRef.current);
     }, 500);
     return () => clearInterval(it);
-  }, [pageStatus]);
+  }, [pageStatus, micConfirmed]);
+
+  const handleMicConfirm = (deviceId: string | undefined) => {
+    if (deviceId) localStorage.setItem(MIC_ID_KEY, deviceId);
+    setSelectedMicId(deviceId);
+    setMicConfirmed(true);
+  };
+
+  const handleMicCancel = () => {
+    navigate("/exam");
+  };
+
+  // Imtihon davomida mikrofonni qayta tanlash — ulanishni uzib, tekshiruvni qayta ochamiz
+  const reopenMicCheck = () => {
+    try { disconnect(); } catch { /* noop */ }
+    setMicConfirmed(false);
+  };
+
+  // Chat (matn) javobini yuborish
+  const handleSendText = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = chatText.trim();
+    if (!t || liveStatus === "connecting") return;
+    sendText(t);
+    setAwaitingClientReply(true);
+    setChatText("");
+  };
 
   // Auto-finish on hard cap
   useEffect(() => {
@@ -142,19 +184,30 @@ const ExamSessionPage: React.FC = () => {
   useEffect(() => {
     if (liveError) setErrorMsg(liveError);
   }, [liveError]);
+  useEffect(() => {
+    if (lastUserText || lastAiText) {
+      setAwaitingClientReply(true);
+    }
+  }, [lastUserText, lastAiText]);
 
-  const allMessages: TranscriptMessage[] = useMemo(() => {
+  useEffect(() => {
+    const latest = liveMessages[liveMessages.length - 1];
+    if (latest?.role === "client") {
+      setAwaitingClientReply(false);
+    }
+  }, [liveMessages]);
+
+  const allMessages: ChatMsg[] = useMemo(() => {
     return [...initialMessages, ...liveMessages];
   }, [initialMessages, liveMessages]);
 
-  const sphereStatus: VoiceSphereStatus = useMemo(() => {
-    if (liveStatus === "connecting") return "thinking";
-    if (liveStatus === "speaking" || aiLevel > 0.02) return "speaking";
-    if (micLevel > 0.04) return "listening";
-    return "idle";
-  }, [liveStatus, aiLevel, micLevel]);
+  // Yangi xabar / yozilayotgan matnda pastga scroll
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [allMessages.length, lastUserText, lastAiText, awaitingClientReply]);
 
   const mySalespersonTurns = allMessages.filter((m) => m.role === "salesperson").length;
+  const showClientDraft = Boolean(lastAiText) || awaitingClientReply;
 
   const doFinish = async () => {
     if (!id) return;
@@ -200,132 +253,192 @@ const ExamSessionPage: React.FC = () => {
     navigate("/exam");
   };
 
-  const statusLabel = useMemo(() => {
-    if (liveStatus === "connecting") return "Ulanyapti...";
-    if (liveStatus === "speaking" || aiLevel > 0.02) return "Mijoz gapiryapti...";
-    if (micLevel > 0.04) return "Tinglayapman...";
-    if (muted) return "Mikrofon o'chirilgan";
-    return "Gapirib boshlang";
-  }, [liveStatus, aiLevel, micLevel, muted]);
-
-  const genderEmoji = clientInfo.gender === "female" ? "F" : clientInfo.gender === "male" ? "M" : "";
+  const genderEmoji = clientInfo.gender === "female" ? "👩" : clientInfo.gender === "male" ? "👨" : "🧑";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-purple-950 text-white relative overflow-hidden">
-      {/* Background blobs */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-32 -left-32 w-[480px] h-[480px] rounded-full bg-indigo-600/20 blur-[120px]" />
-        <div className="absolute -bottom-40 -right-32 w-[520px] h-[520px] rounded-full bg-purple-600/20 blur-[120px]" />
-        <div className="absolute top-1/3 right-1/4 w-[300px] h-[300px] rounded-full bg-cyan-500/10 blur-[100px]" />
-      </div>
-
-      {/* Top bar */}
-      <header className="relative z-10 px-4 pt-4 flex items-center justify-between gap-3">
+    <div
+      className="h-screen h-[100dvh] flex flex-col relative overflow-hidden"
+      style={{ backgroundColor: "var(--color-primary-bg)", color: "var(--text-primary)" }}
+    >
+      {/* Top bar — qotib turadi (sticky) */}
+      <header className="relative z-10 px-4 pt-4 pb-3 flex items-center justify-between gap-3 flex-shrink-0 border-b border-[var(--color-border)]"
+        style={{ backgroundColor: "var(--color-primary-bg)" }}
+      >
         <button
           onClick={() => setConfirmModal("abandon")}
-          className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 backdrop-blur-xl border border-white/10 flex items-center justify-center transition-all duration-300"
+          className="w-9 h-9 rounded-full hover:bg-accent/10 flex items-center justify-center transition-all duration-200"
           aria-label="Chiqish"
         >
-          <X size={18} className="text-white/80" />
+          <X size={20} className="text-secondary" />
         </button>
 
-        <div className="flex items-center gap-2 flex-wrap justify-center">
-          {scenario && (
-            <div className="px-3 py-1.5 rounded-full bg-white/5 backdrop-blur-xl border border-white/10 text-xs font-medium flex items-center gap-1.5">
-              <Sparkles size={12} className="text-violet-300" />
-              <span>{scenario.name}</span>
-            </div>
-          )}
-          {clientInfo.name && (
-            <div className="px-3 py-1.5 rounded-full bg-white/5 backdrop-blur-xl border border-white/10 text-xs font-medium flex items-center gap-1.5">
-              <span className="opacity-60">{genderEmoji}</span>
+        <div className="flex flex-col items-center text-center min-w-0">
+          <div className="text-sm font-semibold truncate max-w-[60vw]">
+            {scenario?.name || "Imtihon"}
+          </div>
+          <div className="text-[11px] text-secondary flex items-center gap-1.5 mt-0.5 flex-wrap justify-center">
+            {clientInfo.name && (
               <span>
-                {clientInfo.name}
+                {genderEmoji} {clientInfo.name}
                 {clientInfo.age ? `, ${clientInfo.age}` : ""}
               </span>
-            </div>
-          )}
-          <div className="px-3 py-1.5 rounded-full bg-white/5 backdrop-blur-xl border border-white/10 text-xs font-mono tracking-wide">
-            {formatTime(elapsedMs)}
+            )}
+            <span className="opacity-50">·</span>
+            <span>{mySalespersonTurns} ta javob</span>
+            <span className="opacity-50">·</span>
+            <span className="font-mono">{formatTime(elapsedMs)}</span>
           </div>
         </div>
 
         <button
           onClick={() => setConfirmModal("finish")}
           disabled={mySalespersonTurns < 1 || isGrading}
-          className="px-4 py-2 rounded-full bg-gradient-to-r from-emerald-500/20 to-emerald-400/20 hover:from-emerald-500/30 hover:to-emerald-400/30 border border-emerald-400/30 text-emerald-200 text-xs font-semibold backdrop-blur-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300"
+          className="px-3 py-1.5 rounded-full text-emerald-400 hover:bg-emerald-400/10 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200"
         >
           Yakunlash
         </button>
       </header>
 
-      {/* Center: Sphere */}
-      <main className="relative z-10 flex flex-col items-center justify-center px-4 pt-8 pb-4">
-        <div className="w-full max-w-[520px]">
-          <VoiceSphere
-            aiLevel={aiLevel}
-            micLevel={micLevel}
-            frequencyData={frequencyData}
-            status={sphereStatus}
-          />
-        </div>
+      {/* Chat thread — faqat shu qism scroll bo'ladi */}
+      <main className="relative z-10 flex-1 min-h-0 overflow-y-auto px-4 pb-4" style={{ scrollbarWidth: "thin" }}>
+        <div className="max-w-2xl mx-auto space-y-3 py-2">
+          {allMessages.length === 0 && pageStatus === "ready" && !lastUserText && !lastAiText && (
+            <div className="text-center text-secondary text-sm py-10">
+              {liveStatus === "connecting"
+                ? "Ulanmoqda..."
+                : "Mijoz bilan suhbatni boshlash uchun gapiring yoki javob yozing."}
+            </div>
+          )}
 
-        <div className="mt-2 text-center">
-          <div className="text-lg md:text-xl font-semibold bg-clip-text text-transparent bg-gradient-to-r from-cyan-300 to-violet-300">
-            {statusLabel}
-          </div>
-          <div className="text-xs text-white/40 mt-1">{mySalespersonTurns} ta javob</div>
-        </div>
+          {allMessages.map((m, i) => {
+            const mine = m.role === "salesperson";
+            return (
+              <div key={i} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[80%] min-w-0 flex flex-col ${mine ? "items-end" : "items-start"}`}>
+                  <span className="text-[10px] uppercase tracking-wide text-secondary mb-1 px-1">
+                    {mine ? "Siz" : clientInfo.name || "Mijoz"}
+                  </span>
+                  <div
+                    className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-lg whitespace-pre-wrap break-words ${
+                      mine
+                        ? "bg-gradient-to-br from-violet-500 to-indigo-500 text-white rounded-br-md"
+                        : "bg-[var(--color-card-bg)] border border-[var(--color-border)] text-[var(--text-primary)] rounded-bl-md"
+                    }`}
+                  >
+                    {m.text}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
 
-        {/* Google Meet uslubidagi audio bars — manager ovozi ritmiga qarab harakatlanadi */}
-        <div className="mt-4 w-full max-w-md">
-          <AudioBars
-            frequencyData={frequencyData}
-            level={Math.max(micLevel, aiLevel)}
-            active={!muted}
-            color={liveStatus === "speaking" || aiLevel > 0.02 ? "#a78bfa" : "#22d3ee"}
-            height={50}
-            bars={32}
-          />
+          {/* Siz hozir gapirayotgan (jonli STT) */}
+          {lastUserText && (
+            <div className="flex justify-end">
+              <div className="max-w-[80%] min-w-0 flex flex-col items-end">
+                <span className="text-[10px] uppercase tracking-wide text-secondary mb-1 px-1">Siz</span>
+                <div className="px-4 py-2.5 rounded-2xl rounded-br-md text-sm leading-relaxed shadow-lg whitespace-pre-wrap break-words bg-gradient-to-br from-violet-500/70 to-indigo-500/70 text-white">
+                  {lastUserText}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Mijoz javobi: jonli matn yoki "yozmoqda" indikatori */}
+          {showClientDraft && (
+            <div className="flex justify-start">
+              <div className="max-w-[80%] flex flex-col items-start">
+                <span className="text-[10px] uppercase tracking-wide text-secondary mb-1 px-1">
+                  {clientInfo.name || "Mijoz"}
+                </span>
+                <div className="px-4 py-3 rounded-2xl rounded-bl-md bg-[var(--color-card-bg)] border border-[var(--color-border)] text-sm leading-relaxed whitespace-pre-wrap break-words">
+                  {lastAiText ? (
+                    lastAiText
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-secondary animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-secondary animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-secondary animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={endRef} />
         </div>
       </main>
 
-      {/* Transcript */}
-      <section className="relative z-10 px-2 pb-32">
-        <TranscriptStream
-          messages={allMessages}
-          pendingUser={lastUserText}
-          pendingAi={lastAiText}
-        />
-      </section>
-
-      {/* Bottom bar */}
-      <footer className="fixed bottom-0 left-0 right-0 z-20 px-4 pb-6 pt-3 bg-gradient-to-t from-slate-950/90 to-transparent backdrop-blur-sm">
-        <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
+      {/* Bottom bar — qotib turadi (sticky) */}
+      <footer
+        className="relative z-20 px-4 pb-6 pt-3 flex-shrink-0 border-t border-[var(--color-border)]"
+        style={{ backgroundColor: "var(--color-primary-bg)" }}
+      >
+        <form onSubmit={handleSendText} className="max-w-2xl mx-auto flex items-center gap-2">
+          {/* Mikrofon yoqish/o'chirish (realtime — mute) */}
           <button
+            type="button"
             onClick={toggleMute}
-            className={`w-14 h-14 rounded-full flex items-center justify-center border backdrop-blur-xl transition-all duration-300 ${
+            disabled={isGrading}
+            className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 disabled:opacity-40 ${
               muted
-                ? "bg-red-500/20 border-red-400/40 text-red-200 hover:bg-red-500/30"
-                : "bg-white/5 border-white/10 text-white hover:bg-white/10"
+                ? "bg-red-500/20 border border-red-400/40 text-red-300 hover:bg-red-500/30"
+                : "bg-indigo-500 text-white hover:bg-indigo-400 shadow-lg shadow-indigo-500/40"
             }`}
             aria-label={muted ? "Mikrofonni yoqish" : "Mikrofonni o'chirish"}
+            title={muted ? "Mikrofonni yoqish" : "Mikrofonni o'chirish"}
           >
-            {muted ? <MicOff size={22} /> : <Mic size={22} />}
+            {muted ? <MicOff size={20} /> : <Mic size={20} />}
           </button>
 
+          {/* Matn (chat) input */}
+          <input
+            type="text"
+            value={chatText}
+            onChange={(e) => setChatText(e.target.value)}
+            placeholder="Mijozga javob yozing..."
+            disabled={isGrading}
+            className="flex-1 h-12 px-4 rounded-2xl text-sm bg-[var(--color-card-bg)] border border-[var(--color-border)] text-[var(--text-primary)] placeholder:text-secondary outline-none focus:border-indigo-400 disabled:opacity-50 transition-all"
+          />
+
+          {/* Yuborish */}
           <button
-            onClick={() => setConfirmModal("finish")}
-            disabled={mySalespersonTurns < 1 || isGrading}
-            className="flex-1 max-w-xs flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-400 hover:to-pink-400 text-white font-semibold shadow-lg shadow-pink-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300"
+            type="submit"
+            disabled={!chatText.trim() || liveStatus === "connecting" || isGrading}
+            className="flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center bg-gradient-to-br from-violet-500 to-indigo-500 text-white hover:from-violet-400 hover:to-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 shadow-lg shadow-indigo-500/40"
+            aria-label="Yuborish"
           >
-            <PhoneOff size={18} />
-            Tugatish
+            <Send size={20} />
           </button>
-
-          <div className="w-14 h-14" />
-        </div>
+        </form>
       </footer>
+
+      {/* Mikrofon tekshiruvi — imtihon boshlanishidan oldin */}
+      {pageStatus === "ready" && !micConfirmed && (
+        <MicCheck
+          initialDeviceId={selectedMicId}
+          onConfirm={handleMicConfirm}
+          onCancel={handleMicCancel}
+        />
+      )}
+
+      {/* Imtihon davomida jimlik aniqlansa — qurilma muammosi ogohlantirishi */}
+      {micConfirmed && micSilent && !muted && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-40 max-w-md w-[calc(100%-2rem)]">
+          <div className="rounded-2xl bg-rose-500/15 backdrop-blur-xl border border-rose-400/30 px-4 py-3 flex items-start gap-3 shadow-lg">
+            <AlertTriangle size={18} className="text-rose-300 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 text-sm text-rose-100">
+              Mikrofondan ovoz kelmayapti. Gapirayotganingizga ishonch hosil qiling, yoki yozib davom eting / boshqa mikrofon tanlang.
+            </div>
+            <button
+              onClick={reopenMicCheck}
+              className="text-xs font-semibold px-2.5 py-1 rounded-full bg-rose-400/20 border border-rose-300/30 text-rose-100 hover:bg-rose-400/30 transition-colors whitespace-nowrap"
+            >
+              Mikrofon tanlash
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Grading overlay */}
       {isGrading && (
@@ -333,7 +446,7 @@ const ExamSessionPage: React.FC = () => {
           <div className="rounded-3xl shadow-2xl max-w-sm w-full p-8 bg-white/5 backdrop-blur-xl border border-white/10">
             <div className="flex flex-col items-center text-center gap-4">
               <Loader2 size={40} className="animate-spin text-violet-300" />
-              <h3 className="text-lg font-semibold">Tahlil qilinmoqda...</h3>
+              <h3 className="text-lg font-semibold text-white">Tahlil qilinmoqda...</h3>
               <p className="text-sm text-white/60">
                 AI suhbatingizni baholamoqda. Bu 10-20 sekund vaqt olishi mumkin.
               </p>
@@ -345,7 +458,7 @@ const ExamSessionPage: React.FC = () => {
       {/* Confirm modal */}
       {confirmModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="rounded-3xl shadow-2xl max-w-sm w-full p-6 bg-white/5 backdrop-blur-xl border border-white/10">
+          <div className="rounded-3xl shadow-2xl max-w-sm w-full p-6 bg-white/5 backdrop-blur-xl border border-white/10 text-white">
             <div className="flex flex-col items-center text-center gap-3">
               {confirmModal === "finish" ? (
                 <>

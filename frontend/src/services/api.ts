@@ -1,16 +1,12 @@
 import axios from "axios";
+import { API_BASE_URL } from "./apiBase";
 
 // VITE_API_URL:
 //   - "/api" yoki "/..." (slash bilan) → relative (current origin'da nginx proxy)
 //   - "http(s)://..." → absolyut URL
 //   - "api.example.com" (protokolsiz host) → https:// avtomatik qo'shiladi
-const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-const normalizedApiUrl = /^https?:\/\//i.test(rawApiUrl) || rawApiUrl.startsWith("/")
-  ? rawApiUrl
-  : `https://${rawApiUrl}`;
-
 const api = axios.create({
-  baseURL: normalizedApiUrl,
+  baseURL: API_BASE_URL,
   headers: {
     "Content-Type": "application/json",
   },

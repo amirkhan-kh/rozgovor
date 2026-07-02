@@ -9,7 +9,6 @@ import LeadTransfersSection from "./LeadTransfersSection";
 import QualityTrendCard from "./QualityTrendCard";
 import ResponseTimeByManagerCard from "./ResponseTimeByManagerCard";
 import CallAttemptsCard from "./CallAttemptsCard";
-import StageMismatchCard from "./StageMismatchCard";
 import PresentationsCard from "./PresentationsCard";
 import PaymentAnalyticsCard from "./PaymentAnalyticsCard";
 import TransferTimeCard from "./TransferTimeCard";
@@ -175,7 +174,6 @@ const AnalyticsPage: React.FC = () => {
         <>
           <PresentationsCard />
           <ObjectionTrendCard />
-          <StageMismatchCard />
           <PaymentAnalyticsCard />
         </>
       )}

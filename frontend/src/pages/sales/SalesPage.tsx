@@ -15,6 +15,7 @@ import {
   User,
   Calendar as CalendarIcon,
   X,
+  RotateCcw,
   ArrowUp,
   ArrowDown,
   Minus,
@@ -258,6 +259,8 @@ interface BreakdownPieProps {
   items: { name: string; count: number }[];
   emptyText?: string;
   maxSlices?: number;
+  // true bo'lsa maxSlices'dan tashqari qolganlar "Boshqalar" ga yig'ilmaydi, tashlab yuboriladi
+  hideOthers?: boolean;
 }
 
 const BreakdownPieChart: React.FC<BreakdownPieProps> = ({
@@ -267,15 +270,18 @@ const BreakdownPieChart: React.FC<BreakdownPieProps> = ({
   items,
   emptyText,
   maxSlices = 6,
+  hideOthers = false,
 }) => {
   const [active, setActive] = useState<number | null>(null);
   const sorted = [...items].sort((a, b) => b.count - a.count);
-  const total = sorted.reduce((a, b) => a + b.count, 0);
   const TOP = maxSlices;
   const top = sorted.slice(0, TOP);
   const restCount = sorted.slice(TOP).reduce((a, b) => a + b.count, 0);
   const data =
-    restCount > 0 ? [...top, { name: "Boshqalar", count: restCount }] : top;
+    !hideOthers && restCount > 0
+      ? [...top, { name: "Boshqalar", count: restCount }]
+      : top;
+  const total = data.reduce((a, b) => a + b.count, 0);
 
   if (total === 0) {
     return (
@@ -1714,17 +1720,36 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
         )}
       </div>
 
-      {/* ── Rad etish sabablari ───────────────────────────── */}
-      {data && data.rejectionBreakdown.length > 0 && (
-        <BreakdownPieChart
-          title="Rad etish sabablari"
-          icon={<X size={16} />}
-          accentColor="#ef4444"
-          items={data.rejectionBreakdown}
-          emptyText="Davrda rad etilgan deal yo'q"
-          maxSlices={4}
-        />
-      )}
+      {/* ── Rad etish + Qayta ishlov berish sabablari (2 qism) ─── */}
+      {data &&
+        (data.rejectionBreakdown.length > 0 ||
+          data.reprocessBreakdown.length > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {data.rejectionBreakdown.length > 0 && (
+              <BreakdownPieChart
+                title="Rad etish sabablari"
+                icon={<X size={16} />}
+                accentColor="#ef4444"
+                items={data.rejectionBreakdown}
+                emptyText="Davrda rad etilgan lid yo'q"
+                maxSlices={4}
+              />
+            )}
+            {data.reprocessBreakdown.length > 0 && (
+              <BreakdownPieChart
+                title="Qayta ishlov berish sabablari"
+                icon={<RotateCcw size={16} />}
+                accentColor="#f59e0b"
+                items={data.reprocessBreakdown.filter(
+                  (r) => r.name.trim().toLowerCase() !== "boshqa"
+                )}
+                emptyText="Davrda qayta ishlov berilgan lid yo'q"
+                maxSlices={6}
+                hideOthers
+              />
+            )}
+          </div>
+        )}
 
       {/* ── Zadach statistikasi (joriy holat) ─────────────── */}
       <div>

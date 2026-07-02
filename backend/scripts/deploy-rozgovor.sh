@@ -16,6 +16,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)" # backend/
 # borligi noaniq; yangi sync/reconcile uchun shart emas — psg-default landmine'i env
 # o'rnatilgani uchun zararsiz qoladi).
 FILES=(
+  "src/controllers/coach.controller.ts"
   "src/services/bitrix-sync.ts"
   "src/services/scheduler.ts"
   "src/utils/bitrix-config.ts"

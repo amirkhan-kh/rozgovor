@@ -18,7 +18,17 @@ export interface WsMessage {
 }
 
 export function initWebSocket(httpServer: Server) {
-  wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  wss = new WebSocketServer({ noServer: true });
+
+  httpServer.on("upgrade", (req, socket, head) => {
+    if (!req.url) return;
+    const u = new URL(req.url, `ws://${req.headers.host}`);
+    if (u.pathname !== "/ws") return;
+
+    wss?.handleUpgrade(req, socket, head, (ws) => {
+      wss?.emit("connection", ws, req);
+    });
+  });
 
   wss.on("connection", async (ws: TaggedWs, req) => {
     try {
