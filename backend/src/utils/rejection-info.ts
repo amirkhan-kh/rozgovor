@@ -7,18 +7,15 @@ import { prisma } from "./prisma";
 //
 // ⚠️ Bu helperlar audio.controller (per-audio rejectionInfo) va audit.controller
 // (lost-verdicts aggregate) tomonidan ulashiladi — duplicate qilmaslik uchun umumiy.
+//
+// VERDIKT MODELI (2026-07-02 qayta loyiha): e'tiroz-korzina taqqoslashi EMAS.
+// Portalda CRM close reason faqat 4 ta operatsion teg ("Noto'g'ri raqam", "Chet el
+// raqami", "Ariza qoldirmagan", "Bepul xohladi") — hammasi "bu lid mazmunli emas edi"
+// deb da'vo qiladi. Yagona savol: transkriptda HAQIQIY MAZMUNLI SUHBAT bo'lganmi?
+// Bo'lgan bo'lsa → teg NOTO'G'RI (mis-tag). Bo'lmagan bo'lsa → teg TO'G'RI. Chegaraviy /
+// telefon-join / kuchsiz signal → "Aniqlab bo'lmadi" (abstain). Vertex/LLM ISHLATILMAYDI —
+// faqat mavjud Analysis + AudioFile maydonlari (deterministik heuristika).
 // ─────────────────────────────────────────────────────────────────────────────
-export const REJECTION_REASON_META: Record<string, { label: string; keywords: string[] }> = {
-  price: { label: "Narx", keywords: ["narx", "qimmat", "pul", "to'lov", "tolov", "chegirma", "byudjet", "budget", "price", "arzon", "dorogo", "дорого", "дорогой", "цена", "денег нет"] },
-  timing: { label: "Vaqt", keywords: ["vaqt", "keyin", "hozir emas", "band", "ertaga", "hafta", "oy", "muddat", "timing", "позже", "потом", "не сейчас", "занят"] },
-  competitor: { label: "Raqobatchi", keywords: ["boshqa", "raqobatchi", "competitor", "alternativ", "variant", "ko'rib", "korib", "другой", "конкурент", "посмотрим"] },
-  authority: { label: "Qaror qiluvchi", keywords: ["rahbar", "boshliq", "direktor", "sherik", "ota", "ona", "turmush", "oila", "maslahat", "посоветуюсь", "муж", "жена", "родител"] },
-  need: { label: "Ehtiyoj yo'q", keywords: ["kerak emas", "qiziq emas", "zarur emas", "ehtiyoj", "hojat", "xohlamayman", "hohlamayman", "ne nado", "ne interesno", "не надо", "не интересно", "не нужно"] },
-  trust: { label: "Ishonch", keywords: ["ishon", "kafolat", "natija", "aldan", "shubha", "risk", "qo'rq", "qorq", "доверя", "гаранти", "обман", "сомнева"] },
-  fit: { label: "Mos emas", keywords: ["mos emas", "to'g'ri kelmaydi", "togri kelmaydi", "boshqa soha", "format", "joy", "не подходит", "не то"] },
-  other: { label: "Boshqa sabab", keywords: [] },
-};
-
 export const textOf = (value: any): string => {
   if (!value) return "";
   if (typeof value === "string") return value;
@@ -34,56 +31,13 @@ export const rejectionAnalysisSelect = {
   leadQuality: true,
   summary: true,
   objections: true,
-  lossPoints: true,
   followupReason: true,
   followupPhrase: true,
-  voiceOfCustomer: true,
-  judgeReason: true,
-  judgeSkipped: true,
-};
-
-// Verdict kontekstida CRM `closeReasonName` BO'LMASLIGI kerak — aks holda
-// managerVerdictFor `textSupport` doim TRUE bo'lib qoladi (manager sababini o'z-o'zi
-// bilan solishtiradi → har doim "Tasdiqlandi"). Faqat transkript/AI signallari.
-export const verdictContextText = (analysis: any): string => {
-  const objections = Array.isArray(analysis?.objections) ? analysis.objections : [];
-  const lossPoints = Array.isArray(analysis?.lossPoints) ? analysis.lossPoints : [];
-  const voice = analysis?.voiceOfCustomer || {};
-  return [
-    analysis?.summary,
-    analysis?.followupReason,
-    analysis?.followupPhrase,
-    objections.length ? textOf(objections) : null,
-    lossPoints.length ? textOf(lossPoints) : null,
-    voice.mainPain ? textOf(voice.mainPain) : null,
-    voice.expectations ? textOf(voice.expectations) : null,
-    voice.buyingCriteria ? textOf(voice.buyingCriteria) : null,
-    analysis?.judgeReason,
-  ].filter(Boolean).join(" ").toLowerCase();
-};
-
-export const detectReasonType = (text: string): string => {
-  for (const [key, meta] of Object.entries(REJECTION_REASON_META)) {
-    if (key !== "other" && meta.keywords.some((kw) => text.includes(kw))) return key;
-  }
-  return "other";
-};
-
-export const managerVerdictFor = (managerReason: any, aiType: string, contextText: string) => {
-  if (!managerReason) {
-    return { status: "unknown", label: "Sabab yo'q", short: "CRMda manager yopish sababi topilmadi.", detail: "Manager qo'ygan yopish sababi bo'lmasa, haq/nohaq deb baholab bo'lmaydi." };
-  }
-  const managerText = String(managerReason).toLowerCase();
-  const managerType = detectReasonType(managerText);
-  const exactSupport = managerType !== "other" && managerType === aiType;
-  const textSupport = managerText.split(/\s+/).filter((w) => w.length >= 4).some((w) => contextText.includes(w));
-  if (exactSupport || textSupport) {
-    return { status: "right", label: "Tasdiqlandi", short: "CRMdagi yopish sababi suhbat konteksti bilan mos.", detail: `CRM sababi: ${managerReason}\nSuhbatda shu sababni tasdiqlovchi dalillar bor.` };
-  }
-  if (aiType !== "other") {
-    return { status: "wrong", label: "Mos emas", short: "CRMdagi sabab suhbatdagi asosiy sababga mos emas.", detail: `CRM sababi: ${managerReason}\nSuhbatdagi asosiy sabab: ${REJECTION_REASON_META[aiType]?.label || "Boshqa sabab"}.` };
-  }
-  return { status: "unclear", label: "Aniq emas", short: "Suhbat kontekstidan CRM sababini tasdiqlash qiyin.", detail: `CRM sababi: ${managerReason}\nSuhbat konteksti noaniq yoki boshqa sababga ishora qiladi.` };
+  lossPoints: true,
+  clientSpeech: true,
+  managerSpeech: true,
+  requiresFollowup: true,
+  closeReasonVerdict: true,   // v3 — LLM hukmi
 };
 
 export const compactText = (value: any): string => {
@@ -91,74 +45,147 @@ export const compactText = (value: any): string => {
 };
 
 // "Lost" = Bitrix CRM yopish sababi belgilangan (A usul, semanticId filtrisiz).
-// InterWork AmoCRM "закрыто реализовано" mantig'i bu portalga mos emas — closeReasonName'ga tayanamiz.
+// ⚠️ Faqat SABAB bor lidlar verdiktga kiradi — bare JUNK/statusId (sababsiz) shovqinini
+// olib tashlaymiz (aks holda "unknown" verdikt paydo bo'ladi).
 export const hasLostLeadSignal = (analysis: any, audio: any = {}): boolean => {
   if (!analysis || audio?.isSale === true) return false;
-  return !!(
-    audio?.closeReasonName ||
-    audio?.leadRejectReasonName ||
-    audio?.isJunkLead ||
-    audio?.leadStatusId === "JUNK"
-  );
+  return !!(audio?.closeReasonName || audio?.leadRejectReasonName);
+};
+
+// Transkript "mazmunlilik" signallari — hammasi mavjud maydonlardan (Vertex'siz).
+export const conversationSubstance = (analysis: any, audio: any = {}) => {
+  const an = analysis || {};
+  const status = String(audio?.status || "").toLowerCase();
+  const duration = Number(audio?.duration || 0);
+  const clientSpeech = Number(an?.clientSpeech || 0);
+  const objections = Array.isArray(an?.objections) ? an.objections : [];
+  const leadQuality = String(an?.leadQuality || "").toLowerCase();
+  const overallScore = Number(an?.overallScore || 0);
+  const summary = String(an?.summary || "");
+
+  const done = status === "done";
+  const longCall = duration >= 90; // ≥1.5 daqiqa
+  const clientEngaged = clientSpeech >= 12; // mijoz ≥12% gapirgan
+  const hasObjections = objections.length > 0;
+  const warmLead = ["iliq", "issiq"].includes(leadQuality) || overallScore >= 40;
+  const wantsFollowup = an?.requiresFollowup === true;
+  const richSummary = summary.length >= 120;
+
+  // realConversation — faqat xulosa matnini boyitish uchun (verdikt EMAS).
+  const realConversation =
+    done && (clientEngaged || hasObjections || warmLead || longCall || wantsFollowup);
+
+  // emptyCall — teg to'g'ri (suhbat bo'lmagan).
+  const emptyCall =
+    ["no_conversation", "too_short"].includes(status) ||
+    duration < 30 ||
+    clientSpeech < 4;
+
+  // strongConversation — KONSERVATIV: "wrong" faqat shu sharti bajarilganda chiqadi.
+  const strongConversation =
+    done &&
+    clientSpeech >= 15 &&
+    (hasObjections || ["iliq", "issiq"].includes(leadQuality) || duration >= 120);
+
+  return {
+    done, longCall, clientEngaged, hasObjections, warmLead, wantsFollowup, richSummary,
+    realConversation, emptyCall, strongConversation,
+    duration, clientSpeech, leadQuality, objections, overallScore, summary,
+  };
 };
 
 export const getRejectionInfo = (analysis: any, audio: any = {}) => {
   if (!hasLostLeadSignal(analysis, audio)) return null;
-  const objections = Array.isArray(analysis?.objections) ? analysis.objections : [];
-  const lossPoints = Array.isArray(analysis?.lossPoints) ? analysis.lossPoints : [];
-  // AI signal konteksti — CRM close reason BO'LMAGAN (circular bo'lmasligi uchun).
-  const aiText = verdictContextText(analysis);
-  let type = "other";
-  for (const [key, meta] of Object.entries(REJECTION_REASON_META)) {
-    if (key !== "other" && meta.keywords.some((kw) => aiText.includes(kw))) {
-      type = key;
-      break;
+  const an = analysis || {};
+  const reason: string | null = audio?.leadRejectReasonName || audio?.closeReasonName || null;
+  if (!reason) return null;
+  const s = conversationSubstance(an, audio);
+  // Ulanish ishonchi: exact leadId → "id" (ishonchli), faqat telefon → "phone" (past).
+  const matchConfidence: "id" | "phone" = audio?.matchConfidence === "id" ? "id" : "phone";
+  // Reason manbasi: "deal" = SalesLead.closeReasonName (contemporaneous deal-close),
+  // "lead" = Lead.rejectReasonName (intake JUNK teg, ko'pincha qo'ng'iroqdan oldin qo'yilgan).
+  const reasonSource: "deal" | "lead" = audio?.reasonSource === "deal" ? "deal" : "lead";
+
+  // ── Verdikt qarori ────────────────────────────────────────────────────────
+  // v3 (COUPLED): agar Gemini closeReasonVerdict qaytargan bo'lsa — TO'G'RIDAN-TO'G'RI
+  // map (haq→right, noxaq→wrong, noaniq→unclear), conclusion = verdict.reason.
+  // Yo'q bo'lsa (eski analiz / sabab analiz vaqtida yo'q) — v2 heuristika (O'ZGARMAYDI).
+  const v = an?.closeReasonVerdict as { status?: "haq" | "noxaq" | "noaniq"; reason?: string } | null | undefined;
+  const hasVerdict = !!v && typeof v.status === "string" && ["haq", "noxaq", "noaniq"].includes(v.status);
+
+  let status: "right" | "wrong" | "unclear";
+  let conclusion: string;
+
+  if (hasVerdict) {
+    // ── LLM YO'LI (v3, COUPLED) — to'g'ridan-to'g'ri map ──────────────
+    // Eslatma: bu yo'lda matchConfidence/reasonSource GATE emas — Gemini transkript +
+    // sababni bevosita baholagan. Ular obyektda saqlanadi (frontend/insight uchun).
+    status = v!.status === "haq" ? "right" : v!.status === "noxaq" ? "wrong" : "unclear";
+    conclusion = String(v!.reason || "").replace(/\s+/g, " ").trim()
+      || `"${reason}" sababi bo'yicha LLM hukmi: ${v!.status}.`;
+  } else {
+    // ── HEURISTIK FALLBACK (v2 — O'ZGARMAYDI) ──────────────────────
+    // "wrong" (Manager noxaq) FAQAT real deal-close sababida chiqadi; intake JUNK
+    // teglar (reasonSource="lead") hech qachon "wrong" emas → "Aniqlab bo'lmadi".
+    if (s.emptyCall) {
+      status = "right"; // suhbat bo'lmagan → teg to'g'ri (manager haq)
+    } else if (reasonSource === "deal" && s.strongConversation && matchConfidence === "id") {
+      status = "wrong"; // FAQAT real deal-close sababida noxaq bo'lishi mumkin
+    } else {
+      status = "unclear"; // intake teg + real suhbat / chegaraviy → Aniqlab bo'lmadi
+    }
+
+    // ── Jonli, har-audioga-xos xulosa — haqiqiy analiz matnidan ───────────────
+    const compact = (val: any, n = 220) => String(val || "").replace(/\s+/g, " ").trim().slice(0, n);
+    const lossPoints = Array.isArray(an.lossPoints) ? an.lossPoints : [];
+    const objTypes = (Array.isArray(an.objections) ? an.objections : [])
+      .map((o: any) => o?.type).filter(Boolean).join(", ");
+    const durMin = Math.round((Number(audio?.duration) || 0) / 60);
+
+    // Har audioning O'ZIGA XOS kontekst iboralari (bo'sh bo'lmaganlarini yig'amiz):
+    const ctxBits: string[] = [];
+    if (an.followupReason) ctxBits.push(`yo'qotish sababi — ${compact(an.followupReason)}`);
+    if (an.followupPhrase) ctxBits.push(`mijoz iborasi: "${compact(an.followupPhrase, 160)}"`);
+    if (lossPoints[0]?.description) ctxBits.push(`kritik nuqta — ${compact(lossPoints[0].description)}`);
+    if (objTypes) ctxBits.push(`e'tirozlar: ${objTypes}`);
+    const ctxText = ctxBits.slice(0, 2).join("; "); // 1-2 ta eng muhim, jonli qism
+
+    if (status === "wrong") {
+      conclusion =
+        `Manager dealni "${reason}" sababi bilan yopgan, lekin ${durMin} daqiqalik suhbat mazmunli ` +
+        `(lid sifati "${an.leadQuality || "-"}", mijoz nutqi ${an.clientSpeech || 0}%)` +
+        (ctxText ? `: ${ctxText}` : ``) + `. Yopilish sababi suhbatga mos kelmaydi.`;
+    } else if (status === "right") {
+      conclusion =
+        `"${reason}" to'g'ri qo'yilgan: mazmunli suhbat aniqlanmadi ` +
+        `(${audio?.status || "-"}, ${Number(audio?.duration) || 0}s, mijoz nutqi ${an.clientSpeech || 0}%).`;
+    } else {
+      // unclear
+      if (reasonSource === "lead" && s.realConversation) {
+        // intake JUNK teg + real suhbat — foydali insight, ayblovsiz
+        conclusion =
+          `"${reason}" — lid kiritish bosqichida qo'yilgan teg (JUNK), aniq shu qo'ng'iroqning ` +
+          `yopilish sababi emas, shuning uchun managerni haq/noxaq deb baholab bo'lmaydi. ` +
+          `Ammo suhbat mazmunli edi (lid sifati "${an.leadQuality || "-"}"` +
+          (ctxText ? `; ${ctxText}` : ``) + `) — bu lid qayta ishlanishi mumkin edi.`;
+      } else if (matchConfidence === "phone") {
+        conclusion =
+          `"${reason}" sababi qo'ng'iroqqa telefon raqami bo'yicha bog'landi — bog'lanish aniq ` +
+          `emasligi uchun baholab bo'lmadi.`;
+      } else {
+        conclusion =
+          `"${reason}" sababini suhbat bilan aniq tasdiqlab yoki rad etib bo'lmadi` +
+          (ctxText ? ` (${ctxText})` : ``) + `.`;
+      }
     }
   }
-  const primaryObjection = objections[0]?.type || objections[0]?.description || objections[0]?.text || null;
-  const primaryLoss = lossPoints[0]?.description || null;
-  const managerReason = audio?.leadRejectReasonName || audio?.closeReasonName || null;
-  const managerVerdict = managerVerdictFor(managerReason, type, aiText);
-  const aiReasonLabel = REJECTION_REASON_META[type]?.label || REJECTION_REASON_META.other.label;
-  const reasonLabel = managerReason ? managerReason : `AI tahmin: ${aiReasonLabel}`;
-  const aiContextShort = compactText(
-    primaryLoss ||
-    analysis?.followupReason ||
-    analysis?.followupPhrase ||
-    analysis?.summary ||
-    "Yo'qotilgan lid sababi suhbat kontekstidan aniqlangan"
-  );
-  const short = managerVerdict?.status === "right" && managerReason
-    ? `CRMdagi sabab tasdiqlandi: ${managerReason}.`
-    : !managerReason
-      ? `AI tahmin: ${aiReasonLabel}. ${aiContextShort}`
-      : managerVerdict?.status === "wrong"
-        ? `CRM sababi: ${managerReason}. AI tahmin: ${aiReasonLabel}. ${aiContextShort}`
-        : `CRM sababi: ${managerReason}. ${aiContextShort}`;
-  const evidence = [
-    managerVerdict?.short,
-    (!managerReason || managerVerdict?.status === "wrong") ? `AI tahmin: ${aiReasonLabel}` : null,
-    analysis?.followupReason ? `Follow-up sababi: ${compactText(analysis.followupReason)}` : null,
-    analysis?.followupPhrase ? `Mijoz iborasi: ${compactText(analysis.followupPhrase)}` : null,
-    primaryLoss ? `Yo'qotish nuqtasi: ${compactText(primaryLoss)}` : null,
-    primaryObjection ? `E'tiroz: ${compactText(primaryObjection)}` : null,
-  ].filter(Boolean).slice(0, 4);
-  const detail = [
-    managerReason ? `CRM sababi: ${managerReason}` : "CRM sababi kiritilmagan",
-    !managerReason ? `AI tahmin: ${aiReasonLabel}` : null,
-    `Xulosa: ${managerVerdict?.short || short}`,
-    ...evidence.filter((line) => line !== managerVerdict?.short),
-  ].filter(Boolean).join("\n");
-  return {
-    type,
-    label: reasonLabel,
-    aiReasonLabel,
-    short: String(short),
-    detail,
-    managerReason,
-    managerVerdict,
-    evidence,
-  };
+
+  const verdictLabel =
+    status === "wrong" ? "Manager noxaq" :
+    status === "right" ? "Manager haq" :
+    "Aniqlab bo'lmadi";
+
+  return { reason, reasonSource, status, verdictLabel, conclusion, matchConfidence };
 };
 
 export const phoneKey = (phone: any): string | null => {
@@ -269,15 +296,26 @@ export const attachLeadCloseReasons = async (companyId: string, audios: any[]): 
     const audioLeadIds = [numericLeadId(a.leadId), numericLeadId(a.crmLeadId)].filter(
       (v): v is number => v != null
     );
-    const dealLead =
-      audioLeadIds.map((id) => byLead.get(id) || byOriginal.get(id)).find(Boolean) ||
-      byPhone.get(phoneKey(a.phoneNumber) as string);
-    const crmLead =
-      audioLeadIds.map((id) => crmByLead.get(id)).find(Boolean) ||
-      crmByPhone.get(phoneKey(a.phoneNumber) as string);
+    const dealById = audioLeadIds.map((id) => byLead.get(id) || byOriginal.get(id)).find(Boolean);
+    const crmById = audioLeadIds.map((id) => crmByLead.get(id)).find(Boolean);
+    const dealLead = dealById || byPhone.get(phoneKey(a.phoneNumber) as string);
+    const crmLead = crmById || crmByPhone.get(phoneKey(a.phoneNumber) as string);
     if (!dealLead && !crmLead) return a;
+    // matchConfidence — sabab qaysi record'dan kelsa, o'shaning ulanish turiga qarab.
+    // Reason ustuvorligi getRejectionInfo bilan bir xil: rejectReasonName → closeReasonName.
+    const matchConfidence: "id" | "phone" =
+      crmLead?.rejectReasonName ? (crmById ? "id" : "phone") :
+      dealLead?.closeReasonName ? (dealById ? "id" : "phone") :
+      "phone";
+    // reasonSource — sabab qaysi manbadan keldi: intake Lead (JUNK) yoki deal-close.
+    // Reason ustuvorligi getRejectionInfo bilan bir xil: rejectReasonName → closeReasonName.
+    const reasonSource: "deal" | "lead" | null =
+      crmLead?.rejectReasonName ? "lead" :
+      dealLead?.closeReasonName ? "deal" : null;
     return {
       ...a,
+      matchConfidence,
+      reasonSource,
       closeReasonName: dealLead?.closeReasonName || null,
       leadRejectReasonName: crmLead?.rejectReasonName || null,
       leadStatusId: crmLead?.statusId || null,

@@ -365,6 +365,10 @@ model Analysis {
   // Mijoz profili (AI aniqlaydi har tahlilda — age, gender, interests, fears, region, va h.k.)
   clientProfile Json?
 
+  // v3 — CRM yopish sababi bo'yicha LLM hukmi (COUPLED). Gemini transkript + CRM sababni o'qib to'ldiradi.
+  // { status: "haq"|"noxaq"|"noaniq", reason: string }  — sabab yo'q bo'lsa null (→ heuristik fallback).
+  closeReasonVerdict Json?
+
   audioFile       AudioFile        @relation(fields: [audioFileId], references: [id])
   cleanedAnalysis CleanedAnalysis?
 
@@ -858,6 +862,7 @@ model Lead {
   responsibleManagerId String?
   bitrixUserId         String? // Xom Bitrix user id
   dateCreate           DateTime
+  firstCallAt          DateTime? // Bitrix crm.activity (TYPE_ID=2) eng erta qo'ng'iroq — "aloqaga chiqish" manbasi
   isConverted          Boolean  @default(false) // STATUS_ID === 'CONVERTED'
   rejectReasonId       String? // Bitrix enumeration ID (UF_CRM_1755759759770)
   rejectReasonName     String? // "Telefonni ko'tarmadi", "DUBL", "Xato raqam" va hk

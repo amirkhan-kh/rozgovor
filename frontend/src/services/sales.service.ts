@@ -25,6 +25,13 @@ export interface SalesTimeToContact {
   avgWorkHours: number; // faqat ish vaqti bo'yicha o'rtacha soat
   totalLeadsCount: number;
   contactedLeadsCount: number;
+  // Chet el (UC_IISBVC) lidlari — main o'rtachadan ajratilgan
+  foreign: {
+    avgHours: number;
+    avgWorkHours: number;
+    leadsCount: number;
+    contactedLeadsCount: number;
+  };
 }
 
 export interface SalesByManagerPrev {

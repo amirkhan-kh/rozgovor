@@ -7,7 +7,6 @@ import {
   PhoneCall,
   Repeat,
   Clock,
-  Timer,
   BarChart3,
   AlertTriangle,
   MessageSquare,
@@ -47,11 +46,14 @@ const formatDuration = (sec: number): string => {
   return `${s} son`;
 };
 
-const formatHours = (h: number): string => {
-  if (!h || h < 0) return "—";
-  if (h < 1) return `${Math.round(h * 60)} min`;
-  if (h < 24) return `${h.toFixed(1)} soat`;
-  return `${Math.round(h / 24)} kun`;
+// Sotuv sahifasidagi bilan bir xil — "Aloqaga chiqish" kartasi uchun
+const formatHoursOrDays = (hours: number): string => {
+  if (hours <= 0) return "—";
+  if (hours < 24) return `${Math.round(hours * 10) / 10} soat`;
+  const days = hours / 24;
+  const whole = Math.floor(days);
+  const frac = Math.round((days - whole) * 10);
+  return frac > 0 ? `${whole}.${frac} kun` : `${whole} kun`;
 };
 
 const toLocalDateStr = (d: Date): string => {
@@ -1037,8 +1039,8 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
             />
           </div>
 
-          {/* Pastki qator — 4 ta (4×2 grid) */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Pastki qator — 3 ta (Aloqaga chiqish alohida kartaga chiqarildi) */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <KpiCard
               label="Qayta"
               value={kpis.repeatCallCount.toLocaleString("ru-RU")}
@@ -1055,13 +1057,6 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
               hint="Bir qo'ng'iroqga"
             />
             <KpiCard
-              label="Aloqaga chiqish"
-              value={formatHours(kpis.avgTimeToContactHours)}
-              icon={<Timer size={20} />}
-              accentColor="#14b8a6"
-              hint={`${kpis.totalLeadsCount ?? kpis.contactSampleCount} ta lid (${kpis.contactSampleCount} ta aloqaga chiqilgan)`}
-            />
-            <KpiCard
               label="Suhbat yo'q"
               value={(kpis.noConversationCount ?? 0).toLocaleString("ru-RU")}
               suffix="ta"
@@ -1070,6 +1065,111 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
               hint="Voicemail / avtomat xabar"
             />
           </div>
+
+          {/* Aloqaga chiqish — sotuv sahifasidagi bilan bir xil karta */}
+          {audit?.timeToContact
+            ? (() => {
+                const ttc = audit.timeToContact!;
+                const hasForeign = !!ttc.foreign && ttc.foreign.leadsCount > 0;
+                return (
+                  <Card>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-12 h-12 rounded-xl flex items-center justify-center"
+                          style={{
+                            backgroundColor: "rgba(20, 184, 166, 0.15)",
+                            color: "#14b8a6",
+                          }}
+                        >
+                          <Clock size={22} />
+                        </div>
+                        <div>
+                          <h3
+                            className="text-base font-bold"
+                            style={{ color: "var(--text-primary)" }}
+                          >
+                            Aloqaga chiqish
+                          </h3>
+                          <p
+                            className="text-xs mt-0.5"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            Lid yaratilgandan birinchi aloqagacha
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-5 flex-wrap">
+                        <div className="text-center">
+                          <p
+                            className="text-xs"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            Umumiy
+                          </p>
+                          <p className="text-2xl font-bold" style={{ color: "#14b8a6" }}>
+                            {formatHoursOrDays(ttc.avgHours)}
+                          </p>
+                          {hasForeign && (
+                            <p className="text-[10px] mt-0.5" style={{ color: "#f59e0b" }}>
+                              Chet el: {formatHoursOrDays(ttc.foreign.avgHours)}
+                            </p>
+                          )}
+                        </div>
+                        <div
+                          className="text-center pl-4 border-l"
+                          style={{ borderColor: "var(--color-border)" }}
+                        >
+                          <p
+                            className="text-xs"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            Ish vaqti bo'yicha
+                          </p>
+                          <p className="text-2xl font-bold" style={{ color: "#14b8a6" }}>
+                            {formatHoursOrDays(ttc.avgWorkHours)}
+                          </p>
+                          {hasForeign && (
+                            <p className="text-[10px] mt-0.5" style={{ color: "#f59e0b" }}>
+                              Chet el: {formatHoursOrDays(ttc.foreign.avgWorkHours)}
+                            </p>
+                          )}
+                        </div>
+                        <div
+                          className="text-center pl-4 border-l"
+                          style={{ borderColor: "var(--color-border)" }}
+                        >
+                          <p
+                            className="text-xs"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            Lidlar
+                          </p>
+                          <p
+                            className="text-lg font-bold"
+                            style={{ color: "var(--text-primary)" }}
+                          >
+                            {ttc.totalLeadsCount} ta
+                          </p>
+                          <p
+                            className="text-[10px]"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            {ttc.contactedLeadsCount} aloqaga chiqilgan
+                          </p>
+                          {hasForeign && (
+                            <p className="text-[10px]" style={{ color: "#f59e0b" }}>
+                              Chet el: {ttc.foreign.leadsCount} lid
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })()
+            : null}
         </div>
       ) : null}
 

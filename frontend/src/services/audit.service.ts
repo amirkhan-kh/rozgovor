@@ -16,6 +16,20 @@ export interface AuditKpis {
   noLeadCount?: number;
 }
 
+// Sotuv "Aloqaga chiqish" kartasi bilan bir xil shakl (main + Chet el)
+export interface AuditTimeToContact {
+  avgHours: number;
+  avgWorkHours: number;
+  totalLeadsCount: number;
+  contactedLeadsCount: number;
+  foreign: {
+    avgHours: number;
+    avgWorkHours: number;
+    leadsCount: number;
+    contactedLeadsCount: number;
+  };
+}
+
 export interface AuditOverview {
   period: {
     key: string;
@@ -23,6 +37,7 @@ export interface AuditOverview {
     to: string | null;
   };
   kpis: AuditKpis;
+  timeToContact?: AuditTimeToContact;
 }
 
 export interface AuditOverviewParams {

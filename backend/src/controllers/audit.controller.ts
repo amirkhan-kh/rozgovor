@@ -6,6 +6,7 @@ import {
   getRejectionInfo,
   attachLeadCloseReasons,
 } from "../utils/rejection-info";
+import { computeLeadTimeToContact } from "../utils/time-to-contact";
 
 // Tashkent TZ (UTC+5) — dashboard/sales bilan bir xil
 const TZ = 5;
@@ -202,46 +203,11 @@ export const getAuditOverview = async (
     const firstCallCount = firstPerKey.size;
     const repeatCallCount = Math.max(0, callsWithKey - firstCallCount);
 
-    // O'rtacha lidga aloqaga chiqish vaqti (soat):
-    // (firstContactAt yoki eng erta callDate per lead) - leadCreatedAt
-    // Bitrix sync AudioFile.firstContactAt va leadCreatedAt'ni o'rnatmaydi —
-    // callDate ni contact vaqti, SalesLead.leadCreatedAt ni lid yaratilgan vaqt sifatida ishlatamiz.
-    const earliestPerLead = new Map<number, Date>();
-    for (const a of audios) {
-      if (a.leadId == null) continue;
-      const contactAt = a.firstContactAt || a.callDate;
-      if (!contactAt) continue;
-      const prev = earliestPerLead.get(a.leadId);
-      if (!prev || contactAt.getTime() < prev.getTime()) {
-        earliestPerLead.set(a.leadId, contactAt);
-      }
-    }
-    // SalesLead.leadCreatedAt ni JOIN orqali olamiz (bitrix dealId orqali)
-    const leadIds = Array.from(earliestPerLead.keys());
-    const salesLeads = leadIds.length > 0
-      ? await prisma.salesLead.findMany({
-          where: { companyId, leadId: { in: leadIds } },
-          select: { leadId: true, leadCreatedAt: true },
-        })
-      : [];
-    const leadCreatedMap = new Map<number, Date>();
-    for (const sl of salesLeads) {
-      if (sl.leadCreatedAt) leadCreatedMap.set(sl.leadId, sl.leadCreatedAt);
-    }
-    const contactGapsHrs: number[] = [];
-    for (const [leadId, contactAt] of earliestPerLead) {
-      const created = leadCreatedMap.get(leadId);
-      if (!created) continue;
-      const diffMs = contactAt.getTime() - created.getTime();
-      if (diffMs >= 0) contactGapsHrs.push(diffMs / 3_600_000);
-    }
-    const avgTimeToContactHours =
-      contactGapsHrs.length > 0
-        ? Math.round(
-            (contactGapsHrs.reduce((a, b) => a + b, 0) / contactGapsHrs.length) *
-              10
-          ) / 10
-        : 0;
+    // O'rtacha lidga aloqaga chiqish vaqti — Lead.firstCallAt (Bitrix crm.activity)
+    // manbasidan, Chet el (UC_IISBVC) ajratilgan. Sotuv bilan bir xil shared util.
+    // Davr filtri Lead.dateCreate bo'yicha (audio callDate emas).
+    const timeToContact = await computeLeadTimeToContact(companyId, dateRange);
+    const avgTimeToContactHours = timeToContact.avgHours;
 
     // Umumiy lid soni:
     //   = firstCallCount (qo'ng'iroq qilingan distinct leadId yoki telefon)
@@ -273,10 +239,12 @@ export const getAuditOverview = async (
         avgDurationSec,
         totalDurationSec,
         avgTimeToContactHours,
-        contactSampleCount: contactGapsHrs.length,
+        contactSampleCount: timeToContact.contactedLeadsCount,
         totalLeadsCount,
         noConversationCount,
       },
+      // Sotuv bilan bir xil shakl — main (Chet el'siz) + foreign alohida (shared util).
+      timeToContact,
     });
   } catch (err) {
     console.error("Audit overview error:", err);
@@ -308,6 +276,8 @@ export const getLostVerdicts = async (
         phoneNumber: true,
         isSale: true,
         pipelineName: true,
+        status: true,
+        duration: true,
         analysis: { select: rejectionAnalysisSelect },
       },
     });
@@ -322,18 +292,17 @@ export const getLostVerdicts = async (
       const info = getRejectionInfo(a.analysis, a); // null = yo'qotilgan lid emas
       if (!info) continue;
       total += 1;
-      const status = info.managerVerdict?.status;
-      if (status === "right") right += 1;
-      else if (status === "wrong") wrong += 1;
-      else unclear += 1; // unclear + unknown (closeReasonName bor → unknown amalda chiqmaydi)
+      if (info.status === "right") right += 1;
+      else if (info.status === "wrong") wrong += 1;
+      else unclear += 1; // "Aniqlab bo'lmadi" (abstain)
     }
 
     success(res, {
       total,
       breakdown: [
-        { key: "right", label: "Haq", count: right },
-        { key: "wrong", label: "Nohaq", count: wrong },
-        { key: "unclear", label: "Aniq emas", count: unclear },
+        { key: "right", label: "Manager haq", count: right },
+        { key: "wrong", label: "Manager noxaq", count: wrong },
+        { key: "unclear", label: "Aniqlab bo'lmadi", count: unclear },
       ],
     });
   } catch (err) {

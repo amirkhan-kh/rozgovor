@@ -178,6 +178,19 @@ export const processAudioFile = async (audioFileId: string): Promise<void> => {
     const { getKnowledgeForAudio } = await import("./product-knowledge");
     const knowledgeContext = await getKnowledgeForAudio(audioFileId);
 
+    // 7a. v3 — CRM yopish/rad sababini analiz vaqtida OLIB KELISH (COUPLED prompt uchun).
+    // ⚠️ Online analiz qo'ng'iroqdan darrov keyin → deal-close sabab ko'pincha hali YO'Q.
+    // Intake JUNK teg (Lead.rejectReasonName) esa oldin qo'yilgani uchun keladi. Yo'q → null → heuristik.
+    let closeReason: string | null = null;
+    try {
+      const { attachLeadCloseReasons } = await import("../utils/rejection-info");
+      const [withReason] = await attachLeadCloseReasons(audioFile.companyId, [audioFile]);
+      closeReason =
+        (withReason as any)?.leadRejectReasonName || (withReason as any)?.closeReasonName || null;
+    } catch (crErr) {
+      console.error("[Processor] closeReason join xato:", (crErr as Error).message);
+    }
+
     // 7. Gemini Pro → analysis JSON (mahsulot/kurs + top performer konteksti bilan)
     const analysisResult = await analyzeCall(
       transcription,
@@ -186,6 +199,8 @@ export const processAudioFile = async (audioFileId: string): Promise<void> => {
       criteriaNames,
       knowledgeContext,
       (company?.topPerformerPlaybook as Record<string, any> | null) ?? null,
+      null,
+      closeReason,
     );
 
     // 7b. Cost yozish — online audiolar
@@ -276,6 +291,9 @@ export const processAudioFile = async (audioFileId: string): Promise<void> => {
       voiceOfCustomer: analysisResult.voiceOfCustomer ? JSON.parse(JSON.stringify(analysisResult.voiceOfCustomer)) : null,
       clientProfile: (analysisResult as unknown as { clientProfile?: unknown }).clientProfile
         ? JSON.parse(JSON.stringify((analysisResult as unknown as { clientProfile?: unknown }).clientProfile))
+        : null,
+      closeReasonVerdict: (analysisResult as unknown as { closeReasonVerdict?: unknown }).closeReasonVerdict
+        ? JSON.parse(JSON.stringify((analysisResult as unknown as { closeReasonVerdict?: unknown }).closeReasonVerdict))
         : null,
     };
     await prisma.analysis.upsert({

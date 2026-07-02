@@ -308,12 +308,11 @@ const CoachingInsightsBlock: React.FC<{ insights: CoachingInsights; audioId: str
   );
 };
 
-// 🚩 Manager haq/noxaq verdict uslubi (hardcoded o'zbekcha)
+// 🚩 Yo'qotilgan lid verdikt uslubi (teg to'g'ri/noto'g'ri/aniqlab bo'lmadi)
 const verdictStyle = (status?: string) => {
+  if (status === "wrong") return { label: "Manager noxaq", color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.28)" };
   if (status === "right") return { label: "Manager haq", color: "#22c55e", bg: "rgba(34,197,94,0.12)", border: "rgba(34,197,94,0.28)" };
-  if (status === "wrong") return { label: "Manager nohaq", color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.28)" };
-  if (status === "unclear") return { label: "Aniq emas", color: "#f59e0b", bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.28)" };
-  return { label: "Sabab yo'q", color: "#94a3b8", bg: "rgba(148,163,184,0.1)", border: "rgba(148,163,184,0.22)" };
+  return { label: "Aniqlab bo'lmadi", color: "#f59e0b", bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.28)" };
 };
 
 const AudioDetailPage: React.FC = () => {
@@ -365,13 +364,6 @@ const AudioDetailPage: React.FC = () => {
   const analysis = audio.analysis;
   // 🚩 Yo'qotilgan lid tahlili — server biriktiradi (getOne); client'da qayta hisoblanmaydi.
   const rejectionInfo = (audio?.analysis as any)?.rejectionInfo || null;
-  const rejectionLabel =
-    rejectionInfo?.managerVerdict?.status === "right" && rejectionInfo?.managerReason
-      ? rejectionInfo.managerReason
-      : rejectionInfo?.label;
-  const rejectionShort =
-    rejectionInfo?.short || rejectionInfo?.detail || rejectionInfo?.managerVerdict?.short || rejectionInfo?.managerReason;
-  const rejectionEvidence: string[] = Array.isArray(rejectionInfo?.evidence) ? rejectionInfo.evidence : [];
   // Eski mezon nomlarini yangi nomlarga moslash (dashboard bilan bir xil)
   const normalizeCriterionName = (name: string): string => {
     // Backend dashboard.controller.ts bilan bir xil — yangi "— ..." qo'shimchali
@@ -1045,59 +1037,50 @@ const AudioDetailPage: React.FC = () => {
           </div>
 
           {/* Errors — accordion dropdown */}
-          {rejectionInfo && (
-            <Card title="Yo'qotilgan lid tahlili">
-              <div className="space-y-4">
-                <div
-                  className="rounded-xl p-4"
-                  style={{ backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)" }}
-                >
-                  <div className="flex items-center gap-2 mb-2" style={{ color: "#ef4444" }}>
-                    <Flag size={18} />
-                    <span className="text-sm font-bold">{rejectionLabel}</span>
+          {rejectionInfo && (() => {
+            const v = verdictStyle(rejectionInfo.status);
+            return (
+              <Card title="Yo'qotilgan lid tahlili">
+                <div className="rounded-xl p-4" style={{ backgroundColor: v.bg, border: `1px solid ${v.border}` }}>
+                  <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                    <span
+                      className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
+                      style={{ color: v.color, backgroundColor: "rgba(0,0,0,0.12)" }}
+                    >
+                      <Flag size={13} />
+                      {rejectionInfo.verdictLabel || v.label}
+                    </span>
+                    {rejectionInfo.reason && (
+                      <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                        CRM sababi: <b style={{ color: "var(--text-primary)" }}>{rejectionInfo.reason}</b>
+                      </span>
+                    )}
                   </div>
                   <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
-                    {rejectionShort}
+                    {rejectionInfo.conclusion}
                   </p>
-                </div>
-
-                {rejectionInfo.managerVerdict && (
-                  <div className="rounded-xl p-4" style={{ backgroundColor: verdictStyle(rejectionInfo.managerVerdict.status).bg, border: `1px solid ${verdictStyle(rejectionInfo.managerVerdict.status).border}` }}>
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <div className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>CRM tekshiruvi</div>
-                      <span className="text-xs font-bold px-2 py-1 rounded-full" style={{ color: verdictStyle(rejectionInfo.managerVerdict.status).color, backgroundColor: "rgba(0,0,0,0.12)" }}>
-                        {rejectionInfo.managerVerdict.status === "right" ? "Tasdiqlandi"
-                          : rejectionInfo.managerVerdict.status === "wrong" ? "Mos emas"
-                          : (rejectionInfo.managerVerdict.label || "Aniq emas")}
+                  {rejectionInfo.matchConfidence === "phone" && (
+                    <p className="text-xs mt-2" style={{ color: "var(--text-secondary)" }}>
+                      ⚠ Sabab telefon raqami bo'yicha bog'landi
+                    </p>
+                  )}
+                  {rejectionInfo.status === "wrong" && (
+                    <div
+                      className="mt-3 flex items-start gap-2 rounded-lg px-3 py-2"
+                      style={{ backgroundColor: "rgba(0,0,0,0.12)", border: `1px solid ${v.border}` }}
+                    >
+                      <span className="text-sm font-bold flex-shrink-0" style={{ color: v.color }}>
+                        ♻️ Qayta ishlanadigan lid
+                      </span>
+                      <span className="text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+                        Real, qiziqqan mijoz — junk qilib yopilgan; qaytarib ishlansa bo'ladi.
                       </span>
                     </div>
-                    {rejectionInfo.managerReason && (
-                      <p className="text-sm mb-2 whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
-                        CRM sababi: <b>{rejectionInfo.managerReason}</b>
-                      </p>
-                    )}
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
-                      {rejectionInfo.managerVerdict.short}
-                    </p>
-                  </div>
-                )}
-
-                {rejectionEvidence.length > 0 && (
-                  <div className="rounded-xl p-4" style={{ backgroundColor: "rgba(156,163,175,0.06)", border: "1px solid rgba(156,163,175,0.18)" }}>
-                    <div className="text-xs font-semibold mb-2" style={{ color: "var(--text-secondary)" }}>Asoslar</div>
-                    <ul className="space-y-2 text-sm leading-relaxed whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>
-                      {rejectionEvidence.map((line, i) => (
-                        <li key={i} className="flex gap-2">
-                          <span style={{ color: "var(--text-secondary)" }}>-</span>
-                          <span className="break-words min-w-0">{line}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
+                  )}
+                </div>
+              </Card>
+            );
+          })()}
 
           {analysis.errors.length > 0 && (
             <div

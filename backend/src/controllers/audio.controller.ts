@@ -281,6 +281,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
         select: {
           id: true, leadId: true, crmLeadId: true, phoneNumber: true, isSale: true,
           statusName: true, pipelineName: true, createdAt: true,
+          status: true, duration: true,
           analysis: { select: rejectionAnalysisSelect },
         },
       });
@@ -289,9 +290,9 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       const rejectedIds = withReasons
         .filter((a: any) => !rejectionPipeline || a.pipelineName === rejectionPipeline)
         .filter((a: any) => {
+          // Yangi verdikt modelida `type` yo'q — rejectionReason faqat "all"/off.
           const info = getRejectionInfo(a.analysis, a);
-          if (!info) return false;
-          return rejectionReason === "all" || info.type === rejectionReason;
+          return !!info;
         })
         .sort((a: any, b: any) => {
           const cd = new Date(b.leadClosedAt || 0).getTime() - new Date(a.leadClosedAt || 0).getTime();
@@ -314,6 +315,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
               overallScore: true, leadQuality: true, leadScore: true, errors: true, criteria: true,
               summary: true, objections: true, lossPoints: true,
               followupReason: true, followupPhrase: true, voiceOfCustomer: true, judgeReason: true,
+              clientSpeech: true, managerSpeech: true, requiresFollowup: true,
             },
           },
         },

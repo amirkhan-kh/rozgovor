@@ -78,6 +78,7 @@ import {
   buildAnalysisPrompt,
   buildAnalysisPromptV2,
 } from "./call-analyzer";
+import { attachLeadCloseReasons } from "../utils/rejection-info";
 
 import { RecognizerClient } from "@yandex-cloud/nodejs-sdk/dist/generated/yandex/cloud/ai/stt/v3/stt_service";
 import {
@@ -967,6 +968,26 @@ export async function runStage3_ProBatch(
 1. Javob FAQAT toza JSON bo'lishi kerak — hech qanday kirish matni yo'q
 2. Markdown fence (\`\`\`json) ishlatma — faqat { bilan boshla, } bilan tugat`;
 
+  // v3 — CRM yopish/rad sababini analiz vaqtida OLIB KELISH (COUPLED prompt uchun).
+  // AudioMeta leadId/crmLeadId/phoneNumber tashlab yuboradi → qayta select qilamiz.
+  // attachLeadCloseReasons butun ro'yxat uchun BIR MARTA chaqiriladi (chunklaydi).
+  const reasonByAudio = new Map<string, string | null>();
+  try {
+    const reasonRows = await prisma.audioFile.findMany({
+      where: { id: { in: audios.map((a) => a.id) } },
+      select: {
+        id: true, leadId: true, crmLeadId: true, phoneNumber: true,
+        pipelineName: true, leadTags: true, isSale: true,
+      },
+    });
+    const withReasons = await attachLeadCloseReasons(companyId, reasonRows);
+    for (const r of withReasons as any[]) {
+      reasonByAudio.set(r.id, r.leadRejectReasonName || r.closeReasonName || null);
+    }
+  } catch (e) {
+    console.error("[Stage 3] closeReason join xato:", (e as Error).message);
+  }
+
   const requests: any[] = [];
   for (const audio of audios) {
     if (!audio.transcription) continue;
@@ -985,6 +1006,7 @@ export async function runStage3_ProBatch(
         courseInfo,
         playbook,
         null,
+        reasonByAudio.get(audio.id) || null,
       );
       const taggedUserMessage = `[AUDIO_ID: ${audio.id}]\n\n${userMessage}`;
       requests.push({
@@ -1201,6 +1223,9 @@ export async function runStage3_ProBatch(
           : null,
         clientProfile: (result as any).clientProfile
           ? (JSON.parse(JSON.stringify((result as any).clientProfile)) as any)
+          : null,
+        closeReasonVerdict: (result as any).closeReasonVerdict
+          ? (JSON.parse(JSON.stringify((result as any).closeReasonVerdict)) as any)
           : null,
       };
 

@@ -5,6 +5,7 @@ import { success, error } from "../utils/response";
 import { cache } from "../utils/cache";
 import { BITRIX_WEBHOOK_URL as BITRIX_WEBHOOK } from "../utils/bitrix-config";
 import { businessHoursBetween, parseHmToMinutes } from "../utils/business-hours";
+import { computeLeadTimeToContact } from "../utils/time-to-contact";
 
 // "Sifatli lid" — faqat shu 5 stage'da hisoblanadi (boshqa won/lost stagelar emas).
 // Ochiq stagelar (lead hali yopilmagan):
@@ -1114,6 +1115,13 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       avgWorkHours: number;
       totalLeadsCount: number;
       contactedLeadsCount: number;
+      // Chet el (UC_IISBVC) lidlari — main o'rtachadan ajratilgan
+      foreign: {
+        avgHours: number;
+        avgWorkHours: number;
+        leadsCount: number;
+        contactedLeadsCount: number;
+      };
     };
     // Ish oynasi — company default (bo'sh bo'lsa 09:00–18:00).
     const workStartMin = parseHmToMinutes(companyKpi?.adminWorkStart, 9 * 60);
@@ -1141,61 +1149,10 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10
         : 0;
     if (kpiFromLeads) {
-      // ROZGOVOR — Lead.clientPhone ↔ AudioFile.phoneNumber bo'yicha birinchi qo'ng'iroq
-      const normPhone = (s: string | null) =>
-        (s || "").replace(/\D/g, "").replace(/^998/, "").slice(-9);
-      const leadsForContact = await prisma.lead.findMany({
-        where: dateRange ? { companyId, dateCreate: dateRange } : { companyId },
-        select: { clientPhone: true, dateCreate: true, responsibleManagerId: true },
-      });
-      const leadCreatedByPhone = new Map<
-        string,
-        { date: Date; managerId: string | null }
-      >();
-      for (const l of leadsForContact) {
-        const k = normPhone(l.clientPhone);
-        if (k.length >= 7) {
-          const prev = leadCreatedByPhone.get(k);
-          if (!prev || l.dateCreate < prev.date)
-            leadCreatedByPhone.set(k, {
-              date: l.dateCreate,
-              managerId: l.responsibleManagerId,
-            });
-        }
-      }
-      const contactAudiosLm = await prisma.audioFile.findMany({
-        where: { companyId, callDate: { not: null } },
-        select: { phoneNumber: true, callDate: true },
-      });
-      const firstCallByPhone = new Map<string, Date>();
-      for (const a of contactAudiosLm) {
-        const k = normPhone(a.phoneNumber);
-        if (!k || !a.callDate || !leadCreatedByPhone.has(k)) continue;
-        const prev = firstCallByPhone.get(k);
-        if (!prev || a.callDate < prev) firstCallByPhone.set(k, a.callDate);
-      }
-      const gapsLm: number[] = [];
-      const workGapsLm: number[] = [];
-      for (const [k, call] of firstCallByPhone) {
-        const lead = leadCreatedByPhone.get(k)!;
-        const diff = call.getTime() - lead.date.getTime();
-        if (diff >= 0) {
-          gapsLm.push(diff / 3_600_000);
-          workGapsLm.push(
-            businessHoursBetween(lead.date, call, {
-              workStartMin,
-              workEndMin,
-              daysOff: daysOffFor(lead.managerId),
-            })
-          );
-        }
-      }
-      timeToContact = {
-        avgHours: avgRounded(gapsLm),
-        avgWorkHours: avgRounded(workGapsLm),
-        totalLeadsCount: leadCount,
-        contactedLeadsCount: gapsLm.length,
-      };
+      // ROZGOVOR — "aloqaga chiqish" = Lead.firstCallAt (Bitrix crm.activity'dan
+      // sync qilingan birinchi qo'ng'iroq). Chet el (UC_IISBVC) alohida bucketga
+      // ajratiladi; ish vaqti company + davomat bo'yicha. Shared util.
+      timeToContact = await computeLeadTimeToContact(companyId, dateRange);
     } else {
     // SalesLead'dan olamiz — UI'dagi "Lid soni" shu jadvalga mos
     const salesLeadsForContactWhere: any = { companyId };
@@ -1280,6 +1237,8 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       avgWorkHours: avgRounded(contactWorkHrs),
       totalLeadsCount: leadCount,
       contactedLeadsCount: firstContactByLead.size,
+      // deals-mode'da Chet el kanban yo'q — foreign bo'sh
+      foreign: { avgHours: 0, avgWorkHours: 0, leadsCount: 0, contactedLeadsCount: 0 },
     };
     }
 

@@ -21,6 +21,9 @@ const LostVerdictPie: React.FC<LostVerdictPieProps> = ({ data }) => {
   const total = data.total;
   // 0 bo'lmagan bo'laklar (bo'sh slice pie'ni buzmasligi uchun)
   const slices = data.breakdown.filter((b) => b.count > 0);
+  // §6.1b — "wrong" (Manager noxaq) = noto'g'ri junk qilingan real lidlar → qaytarish mumkin.
+  // Yangi so'rov shart emas — mavjud breakdown'dagi wrong sonidan olinadi.
+  const recoverable = data.breakdown.find((b) => b.key === "wrong")?.count || 0;
 
   if (total === 0 || slices.length === 0) {
     return (
@@ -59,6 +62,20 @@ const LostVerdictPie: React.FC<LostVerdictPieProps> = ({ data }) => {
           {total.toLocaleString("ru-RU")} ta
         </span>
       </div>
+
+      {recoverable > 0 && (
+        <div
+          className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg"
+          style={{ backgroundColor: "rgba(34,197,94,0.10)", border: "1px solid rgba(34,197,94,0.28)" }}
+        >
+          <span className="text-sm font-bold" style={{ color: "#22c55e" }}>
+            ♻️ Qaytariladigan lidlar: {recoverable.toLocaleString("ru-RU")}
+          </span>
+          <span className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+            Noto'g'ri junk qilingan — qaytarib ishlansa bo'ladi
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
         {/* Pie */}
@@ -150,13 +167,20 @@ const LostVerdictPie: React.FC<LostVerdictPieProps> = ({ data }) => {
                   className="w-3 h-3 rounded-full flex-shrink-0"
                   style={{ backgroundColor: color }}
                 />
-                <span
-                  className="text-xs truncate flex-1"
-                  style={{ color: "var(--text-primary)" }}
-                  title={s.label}
-                >
-                  {s.label}
-                </span>
+                <div className="flex-1 min-w-0">
+                  <span
+                    className="text-xs truncate block"
+                    style={{ color: "var(--text-primary)" }}
+                    title={s.label}
+                  >
+                    {s.label}
+                  </span>
+                  {s.key === "wrong" && (
+                    <span className="text-[10px] truncate block" style={{ color: "var(--text-secondary)" }}>
+                      Noto'g'ri junk qilingan — qaytarish mumkin
+                    </span>
+                  )}
+                </div>
                 <span className="text-xs font-bold" style={{ color: "var(--text-primary)" }}>
                   {s.count}
                 </span>

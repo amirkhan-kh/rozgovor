@@ -176,6 +176,12 @@ interface VoiceOfCustomer {
   urgencySignals: string[];          // "qancha tez boshlashim mumkin?" kabi
 }
 
+// ─── Close Reason Verdict (v3, COUPLED) — CRM sababi to'g'ri qo'yilganmi ────
+interface CloseReasonVerdict {
+  status: "haq" | "noxaq" | "noaniq"; // haq=sabab to'g'ri, noxaq=noto'g'ri (real lid), noaniq=aniq emas
+  reason: string;                     // 1-2 jumla o'zbekcha — nega shunday hukm (shu suhbatga xos)
+}
+
 // ─── Intent Signals (B4-1) — Sotib olish niyatlari ───────────────────────
 interface AnalysisResult {
   summary: string;
@@ -198,6 +204,7 @@ interface AnalysisResult {
   questions: QuestionsBreakdown;
   closeAttempts: CloseAttemptsBlock;
   voiceOfCustomer: VoiceOfCustomer;
+  closeReasonVerdict?: CloseReasonVerdict;
 }
 
 export const getCriteriaPrompt = async (companyId: string, category: string = "sotuv"): Promise<{ text: string; criteriaNames: string[] }> => {
@@ -245,12 +252,14 @@ export const buildAnalysisPromptV2 = (
   courseInfo: string = "",
   topPerformerPlaybook: Record<string, any> | null = null,
   leadContext: { realClientName?: string; phone?: string } | null = null,
+  closeReason: string | null = null,
 ): {
   systemInstruction: string;
   userMessage: string;
   responseSchema: any;
 } => {
   const isQayta = category === "qayta";
+  const hasCloseReason = !!(closeReason && closeReason.trim());
 
   // ─── SYSTEM INSTRUCTION (stable, cache qilinadi) ─────────────────
   const systemInstruction = `<role>
@@ -443,6 +452,11 @@ DO NOT flag "Mijozni tinglash" if transcript shows similar-sounding name (Yandex
 </lead_context>\n\n`
     : "";
 
+  // v3 — CRM yopish/rad sababi (COUPLED). Faqat sabab bor bo'lsa qo'shiladi.
+  const closeReasonBlock = hasCloseReason
+    ? `<close_reason>\nBu qo'ng'iroq CRM'da quyidagi sabab bilan YO'QOTILGAN/YOPILGAN deb belgilangan: "${closeReason!.trim()}"\n</close_reason>\n\n`
+    : "";
+
   const criteriaBlock = `<criteria>
 Mezon ro'yxati (DB'dan, sortOrder bo'yicha):
 ${criteriaNames.map((n, i) => `${i + 1}. ${n}`).join("\n")}
@@ -458,7 +472,25 @@ Kontekstni eslatish — asosiy mezon. E'tirozga aniq YECHIM. Bosim closing — q
       : `1-QO'NG'IROQ — birinchi aloqa. Barcha mezonlar muhim. SOPRANO to'liq o'tilishi kerak.`}
 </category>\n\n`;
 
-  const userMessage = `${categoryBlock}${courseBlock}${topPerformerBlock}${leadBlock}${criteriaBlock}<transcript>
+  // v3 — closeReasonVerdict task ko'rsatmasi (faqat sabab bor bo'lsa)
+  const closeReasonTask = hasCloseReason
+    ? `
+- closeReasonVerdict: Yuqoridagi <close_reason> — CRM'da bu lidga qo'yilgan yopish/rad sababi. Transkriptni
+  o'qib, shu sabab MANAGER TOMONIDAN TO'G'RI qo'yilganmi baho ber (4 ta operatsion teg):
+  • "Noto'g'ri raqam" — mijoz "adashdingiz / bunday odam yo'q / noto'g'ri raqam" desa yoki umuman kerakli
+    mijoz bo'lmasa → haq. Kerakli mijoz javob berib, mazmunli gaplashgan bo'lsa → noxaq.
+  • "Chet el raqami" — suhbat xorij/chet el konteksti bilan tasdiqlansa → haq; aks holda → noxaq.
+  • "Ariza qoldirmagan" — mijoz "men hech qanday ariza/zayavka qoldirmaganman, adashgansiz" desa → haq;
+    lekin mijoz mahsulotga qiziqib, savol/ehtiyoj/e'tiroz bildirgan bo'lsa → noxaq (real lid).
+  • "Bepul xohladi" — mijoz faqat bepul variantni so'rab, pulli xizmatga umuman rozi bo'lmasa → haq;
+    narx/to'lov muhokama qilinib, sotib olish ehtimoli bo'lsa → noxaq.
+  status: "haq" (sabab to'g'ri) | "noxaq" (sabab noto'g'ri — real lid mis-tag qilingan) | "noaniq"
+    (transkriptdan aniq aytib bo'lmaydi — zaif signal, STT chalkash yoki suhbat juda qisqa).
+  reason: 1-2 jumla o'zbekcha — nega shunday xulosaga kelding (shu suhbatga xos, shablon bo'lmasin).
+  ⚠️ Yandex STT xatosini (bir necha noto'g'ri so'z) haqiqiy bo'sh/xato qo'ng'iroq bilan chalkashtirma.`
+    : "";
+
+  const userMessage = `${categoryBlock}${courseBlock}${topPerformerBlock}${leadBlock}${closeReasonBlock}${criteriaBlock}<transcript>
 ${transcription}
 </transcript>
 
@@ -467,7 +499,7 @@ Tahlil qil. JSON schema'ga aniq mos ravishda javob qaytar.
 - Har mezonga 0-100 ball + comment
 - evidenceQuote har xato uchun MAJBURIY (transkriptdan aniq iqtibos)
 - coachingInsights: aniq, individual, transkriptdan misol bilan
-- summary: 400-700 chars, 5 strukturali qism + "Tahmin: DAVOM ETILADI/YOPILADI/SHUBHALI/YO'QOLGAN"
+- summary: 400-700 chars, 5 strukturali qism + "Tahmin: DAVOM ETILADI/YOPILADI/SHUBHALI/YO'QOLGAN"${closeReasonTask}
 ${isQayta ? `- qualification: QAYTA QO'NG'IROQDA SOPRANO TAHLIL QILINMAYDI. qualification.overallQualification = 0, qolgan barcha situation/objective/problem/resources/alternatives/need/outcome → asked=false, value="", evidence=null. SOPRANO 1-qo'ng'iroqda allaqachon qilingan deb hisoblanadi.` : ""}
 </task>`;
 
@@ -619,6 +651,18 @@ ${isQayta ? `- qualification: QAYTA QO'NG'IROQDA SOPRANO TAHLIL QILINMAYDI. qual
           overallQualification: { type: "integer", minimum: 0, maximum: 100 },
         },
       },
+      // v3 — Faqat closeReason bo'lsa qo'shiladi (aks holda maydon so'ralmaydi).
+      // Vertex batch tuple type qabul qilmaydi — enum ishlatiladi.
+      ...(hasCloseReason ? {
+        closeReasonVerdict: {
+          type: "object",
+          required: ["status", "reason"],
+          properties: {
+            status: { type: "string", enum: ["haq", "noxaq", "noaniq"] },
+            reason: { type: "string", minLength: 15 },
+          },
+        },
+      } : {}),
     },
   };
 
@@ -1452,6 +1496,14 @@ export const applyAnalysisFallbacks = (
       parsed.voiceOfCustomer.urgencySignals = parsed.voiceOfCustomer.urgencySignals || [];
     }
 
+    // ─── closeReasonVerdict normalizatsiya (v3) ───────────────────────
+    // Gemini qaytarmasa — undefined qoldiramiz (rejection-info heuristikaga tushadi).
+    if (parsed.closeReasonVerdict) {
+      const v = parsed.closeReasonVerdict as any;
+      if (!["haq", "noxaq", "noaniq"].includes(v.status)) v.status = "noaniq";
+      v.reason = typeof v.reason === "string" ? v.reason : "";
+    }
+
     // coachingInsights fallback — agar AI qaytarmasa
     if (!parsed.coachingInsights) {
       const mgrSpeech = parsed.managerSpeechPercent || 50;
@@ -1504,6 +1556,7 @@ export const analyzeCall = async (
   courseInfo: string = "",
   topPerformerPlaybook: Record<string, any> | null = null,
   leadContext: { realClientName?: string; phone?: string } | null = null,
+  closeReason: string | null = null,
 ): Promise<AnalysisResult> => {
   const ai = getAI();
 
@@ -1512,7 +1565,7 @@ export const analyzeCall = async (
     if (USE_PROMPT_V2) {
       // V2 — XML + systemInstruction + responseSchema
       const { systemInstruction, userMessage, responseSchema } = buildAnalysisPromptV2(
-        transcription, criteriaNames, category, courseInfo, topPerformerPlaybook, leadContext
+        transcription, criteriaNames, category, courseInfo, topPerformerPlaybook, leadContext, closeReason
       );
 
       result = await Promise.race([
@@ -1555,7 +1608,7 @@ export const analyzeCall = async (
     if (msg.includes("429") || msg.includes("Resource exhausted")) {
       console.log("[Analysis] 429 — 30s kutib qayta urinish...");
       await new Promise((r) => setTimeout(r, 30000));
-      return analyzeCall(transcription, criteriaText, category, criteriaNames, courseInfo, topPerformerPlaybook, leadContext);
+      return analyzeCall(transcription, criteriaText, category, criteriaNames, courseInfo, topPerformerPlaybook, leadContext, closeReason);
     }
 
     console.error("[Analysis] Xato:", msg);

@@ -1550,14 +1550,23 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
             {isLoading ? (
               <Skeleton className="h-16 w-40" rounded="xl" />
             ) : data?.timeToContact ? (
+              (() => {
+                const ttc = data.timeToContact;
+                const hasForeign = !!ttc.foreign && ttc.foreign.leadsCount > 0;
+                return (
               <div className="flex items-center gap-5 flex-wrap">
                 <div className="text-center">
                   <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
                     Umumiy
                   </p>
                   <p className="text-2xl font-bold" style={{ color: "#14b8a6" }}>
-                    {formatHoursOrDays(data.timeToContact.avgHours)}
+                    {formatHoursOrDays(ttc.avgHours)}
                   </p>
+                  {hasForeign && (
+                    <p className="text-[10px] mt-0.5" style={{ color: "#f59e0b" }}>
+                      Chet el: {formatHoursOrDays(ttc.foreign.avgHours)}
+                    </p>
+                  )}
                 </div>
                 <div
                   className="text-center pl-4 border-l"
@@ -1567,8 +1576,13 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
                     Ish vaqti bo'yicha
                   </p>
                   <p className="text-2xl font-bold" style={{ color: "#14b8a6" }}>
-                    {formatHoursOrDays(data.timeToContact.avgWorkHours)}
+                    {formatHoursOrDays(ttc.avgWorkHours)}
                   </p>
+                  {hasForeign && (
+                    <p className="text-[10px] mt-0.5" style={{ color: "#f59e0b" }}>
+                      Chet el: {formatHoursOrDays(ttc.foreign.avgWorkHours)}
+                    </p>
+                  )}
                 </div>
                 <div
                   className="text-center pl-4 border-l"
@@ -1578,13 +1592,20 @@ const SalesPage: React.FC<SalesPageProps> = ({ forceManagerIds, embedded }) => {
                     Lidlar
                   </p>
                   <p className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>
-                    {data.timeToContact.totalLeadsCount} ta
+                    {ttc.totalLeadsCount} ta
                   </p>
                   <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
-                    {data.timeToContact.contactedLeadsCount} aloqaga chiqilgan
+                    {ttc.contactedLeadsCount} aloqaga chiqilgan
                   </p>
+                  {hasForeign && (
+                    <p className="text-[10px]" style={{ color: "#f59e0b" }}>
+                      Chet el: {ttc.foreign.leadsCount} lid
+                    </p>
+                  )}
                 </div>
               </div>
+                );
+              })()
             ) : null}
           </div>
         </Card>

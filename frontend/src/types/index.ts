@@ -259,21 +259,15 @@ export interface Analysis {
   createdAt: string;
 }
 
-export interface ManagerVerdict {
-  status: "right" | "wrong" | "unclear" | "unknown";
-  label: string;
-  short: string;
-  detail: string;
-}
-
+// 🚩 Yo'qotilgan lid verdikti — CRM tegini transkript reallиги bilan solishtiradi
+// (substance-based, e'tiroz-korzina emas). Backend `getRejectionInfo` biriktiradi.
 export interface RejectionInfo {
-  type: string; // price|timing|competitor|authority|need|trust|fit|other
-  label: string;
-  short: string;
-  detail: string;
-  managerReason?: string | null;
-  managerVerdict?: ManagerVerdict;
-  evidence?: string[];
+  reason: string; // CRM teg matni, masalan "Noto'g'ri raqam"
+  status: "right" | "wrong" | "unclear";
+  verdictLabel: string; // "Manager haq" | "Manager noxaq" | "Aniqlab bo'lmadi"
+  conclusion: string; // Umumiy xulosa — bitta konkret matn
+  matchConfidence?: "id" | "phone";
+  reasonSource?: "deal" | "lead"; // sabab manbasi: deal-close yoki intake JUNK teg
 }
 
 export interface ManagerGrowthCard {
