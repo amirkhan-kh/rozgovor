@@ -863,6 +863,7 @@ model Lead {
   rejectReasonName     String? // "Noto'g'ri raqam", "Ariza qoldirmagan", "Chet el raqami" ...
   reprocessReasonId    String? // Bitrix "Qayta Obrabotka" enum ID (UF_CRM_1744108566958)
   reprocessReasonName  String? // "Narxi qimmat", "Vaqti yo'q", "Uydagilari ruxsat bermadi" ...
+  firstAnsweredCallAt  DateTime? // Birinchi JAVOB BERILGAN qo'ng'iroq (Voximplant CALL_FAILED_CODE=200, CRM_ENTITY_ID orqali)
   productId            String?
   syncedAt             DateTime @default(now()) @updatedAt
 
@@ -876,6 +877,7 @@ model Lead {
   @@index([companyId, responsibleManagerId])
   @@index([companyId, statusId, rejectReasonName])
   @@index([companyId, reprocessReasonName])
+  @@index([companyId, firstAnsweredCallAt])
   @@index([companyId, productId])
 }
 

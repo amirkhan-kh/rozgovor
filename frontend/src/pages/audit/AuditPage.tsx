@@ -7,7 +7,6 @@ import {
   PhoneCall,
   Repeat,
   Clock,
-  Timer,
   BarChart3,
   AlertTriangle,
   MessageSquare,
@@ -1038,7 +1037,7 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
           </div>
 
           {/* Pastki qator — 4 ta (4×2 grid) */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <KpiCard
               label="Qayta"
               value={kpis.repeatCallCount.toLocaleString("ru-RU")}
@@ -1055,13 +1054,6 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
               hint="Bir qo'ng'iroqga"
             />
             <KpiCard
-              label="Aloqaga chiqish"
-              value={formatHours(kpis.avgTimeToContactHours)}
-              icon={<Timer size={20} />}
-              accentColor="#14b8a6"
-              hint={`${kpis.totalLeadsCount ?? kpis.contactSampleCount} ta lid (${kpis.contactSampleCount} ta aloqaga chiqilgan)`}
-            />
-            <KpiCard
               label="Suhbat yo'q"
               value={(kpis.noConversationCount ?? 0).toLocaleString("ru-RU")}
               suffix="ta"
@@ -1070,6 +1062,136 @@ const AuditPage: React.FC<AuditPageProps> = ({ forceManagerIds, embedded }) => {
               hint="Voicemail / avtomat xabar"
             />
           </div>
+
+          {/* Aloqaga chiqish — to'liq kenglik, Mahalliy | Chet el (/sales bilan bir xil) */}
+          {kpis.timeToContact && (
+            <Card>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                {/* Header — chapda */}
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: "rgba(20, 184, 166, 0.15)", color: "#14b8a6" }}
+                  >
+                    <Clock size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold" style={{ color: "var(--text-primary)" }}>
+                      Aloqaga chiqish
+                    </h3>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--text-secondary)" }}>
+                      Lid yaratilgandan birinchi javob berilgan aloqagacha
+                    </p>
+                  </div>
+                </div>
+
+                {/* Stats — o'ngda: Mahalliy | Chet el */}
+                <div className="flex items-start gap-6 flex-wrap">
+                  {(() => {
+                    const s = kpis.timeToContact!.local;
+                    const contacted = s.contactedLeadsCount > 0;
+                    return (
+                      <div>
+                        <p
+                          className="text-[10px] font-semibold uppercase tracking-wide mb-0.5"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
+                          Mahalliy raqamlar
+                        </p>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <div className="text-center min-w-[52px]">
+                            <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                              Umumiy
+                            </p>
+                            <p className="text-lg font-bold leading-tight" style={{ color: "#14b8a6" }}>
+                              {contacted ? formatHours(s.avgHours) : " "}
+                            </p>
+                          </div>
+                          <div
+                            className="text-center pl-3 border-l min-w-[52px]"
+                            style={{ borderColor: "var(--color-border)" }}
+                          >
+                            <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                              Ish vaqti
+                            </p>
+                            <p className="text-lg font-bold leading-tight" style={{ color: "#14b8a6" }}>
+                              {contacted ? formatHours(s.avgWorkHours) : " "}
+                            </p>
+                          </div>
+                          <div className="text-center pl-3 border-l" style={{ borderColor: "var(--color-border)" }}>
+                            <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                              Lidlar
+                            </p>
+                            <p className="text-base font-bold leading-tight" style={{ color: "var(--text-primary)" }}>
+                              {s.totalLeadsCount} ta
+                            </p>
+                            <p className="text-[9px]" style={{ color: "var(--text-secondary)" }}>
+                              {s.contactedLeadsCount} aloqaga chiqilgan
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {kpis.timeToContact!.foreign &&
+                    (() => {
+                      const s = kpis.timeToContact!.foreign!;
+                      const contacted = s.contactedLeadsCount > 0;
+                      return (
+                        <div>
+                          <p
+                            className="text-[10px] font-semibold uppercase tracking-wide mb-0.5"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            Chet el raqamlari
+                          </p>
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <div className="text-center">
+                              <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                                Lidlar
+                              </p>
+                              <p className="text-base font-bold leading-tight" style={{ color: "var(--text-primary)" }}>
+                                {s.totalLeadsCount} ta
+                              </p>
+                              <p className="text-[9px]" style={{ color: "var(--text-secondary)" }}>
+                                {s.contactedLeadsCount} aloqaga chiqilgan
+                              </p>
+                            </div>
+                            {contacted && (
+                              <>
+                                <div
+                                  className="text-center pl-3 border-l min-w-[52px]"
+                                  style={{ borderColor: "var(--color-border)" }}
+                                >
+                                  <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                                    Umumiy
+                                  </p>
+                                  <p className="text-lg font-bold leading-tight" style={{ color: "#14b8a6" }}>
+                                    {formatHours(s.avgHours)}
+                                  </p>
+                                </div>
+                                <div
+                                  className="text-center pl-3 border-l min-w-[52px]"
+                                  style={{ borderColor: "var(--color-border)" }}
+                                >
+                                  <p className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                                    Ish vaqti
+                                  </p>
+                                  <p className="text-lg font-bold leading-tight" style={{ color: "#14b8a6" }}>
+                                    {formatHours(s.avgWorkHours)}
+                                  </p>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                </div>
+              </div>
+            </Card>
+          )}
         </div>
       ) : null}
 

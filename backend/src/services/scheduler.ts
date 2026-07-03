@@ -15,6 +15,7 @@ import { refreshAllObjectionLibraries } from "./objection-library";
 import { syncAllCompaniesSalesLeads } from "./sales-leads-sync";
 import { runBitrixIncrementalSync, runBitrixReconcile, runBitrixReconcileRecent } from "./bitrix-sync";
 import { runBitrixCallsSync } from "./bitrix-calls-sync";
+import { runAnsweredContactsSync } from "./answered-contact-sync";
 import { prewarmClientInsights } from "../controllers/clients.controller";
 import { runActivitiesSync } from "../controllers/activities.controller";
 import { pollVideoOperations } from "./manager-videos";
@@ -87,9 +88,15 @@ export const initScheduler = (): void => {
       runBitrixGuarded("bitrix-calls-sync cron", async () => {
         console.log("[bitrix-calls-sync cron] tick — qo'ng'iroqlar sync");
         await runBitrixCallsSync();
+        // Aloqaga chiqish uchun javob berilgan qo'ng'iroqlar (Lead.firstAnsweredCallAt)
+        await runAnsweredContactsSync();
       }),
     );
-    console.log("[Scheduler] Bitrix qo'ng'iroq sync: har 30 daqiqada + boot");
+    setTimeout(
+      () => runBitrixGuarded("answered-contact-sync boot", runAnsweredContactsSync),
+      60000,
+    ); // 60s keyin — calls boot'dan keyin
+    console.log("[Scheduler] Bitrix qo'ng'iroq + answered-contact sync: har 30 daqiqada + boot");
   }
 
   // Imtihon stsenariylari — boot'da auto-seed (create-only, idempotent, mavjudni

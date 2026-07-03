@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { prisma } from "../utils/prisma";
 import { success, error } from "../utils/response";
+import { parseHmToMinutes } from "../utils/business-hours";
+import { contactStatsFromLeads } from "../utils/time-to-contact";
 import {
   rejectionAnalysisSelect,
   getRejectionInfo,
@@ -257,6 +259,48 @@ export const getAuditOverview = async (
     const uncontactedLeadsCount = await prisma.lead.count({ where: leadWhere });
     const totalLeadsCount = firstCallCount + uncontactedLeadsCount;
 
+    // ─── Aloqaga chiqish (Mahalliy/Chet el) — /sales bilan AYNAN bir xil helper ───
+    // Lid yaratilgan → birinchi JAVOB BERILGAN aloqa (Lead.firstAnsweredCallAt).
+    const contactCompany = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { adminWorkStart: true, adminWorkEnd: true },
+    });
+    const workStartMin = parseHmToMinutes(contactCompany?.adminWorkStart, 9 * 60);
+    const workEndMin = parseHmToMinutes(contactCompany?.adminWorkEnd, 18 * 60);
+    const dayOffRows = await prisma.managerSchedule.findMany({
+      where: { manager: { companyId }, status: { in: [1, 2] } },
+      select: { managerId: true, date: true },
+    });
+    const daysOffByManager = new Map<string, Set<string>>();
+    for (const r of dayOffRows) {
+      let set = daysOffByManager.get(r.managerId);
+      if (!set) {
+        set = new Set<string>();
+        daysOffByManager.set(r.managerId, set);
+      }
+      set.add(r.date);
+    }
+    const contactLeadWhere: Record<string, unknown> = { companyId };
+    if (dateRange) contactLeadWhere.dateCreate = dateRange;
+    if (managerId && managerId !== "all") contactLeadWhere.responsibleManagerId = managerId;
+    else if (managerIds.length > 0) contactLeadWhere.responsibleManagerId = { in: managerIds };
+    if (sourceIds.length > 0) contactLeadWhere.sourceId = { in: sourceIds };
+    const contactLeads = await prisma.lead.findMany({
+      where: contactLeadWhere,
+      select: {
+        dateCreate: true,
+        responsibleManagerId: true,
+        statusName: true,
+        rejectReasonName: true,
+        firstAnsweredCallAt: true,
+      },
+    });
+    const timeToContact = contactStatsFromLeads(contactLeads, {
+      workStartMin,
+      workEndMin,
+      daysOffByManager,
+    });
+
     success(res, {
       period: {
         key: period,
@@ -275,6 +319,7 @@ export const getAuditOverview = async (
         contactSampleCount: contactGapsHrs.length,
         totalLeadsCount,
         noConversationCount,
+        timeToContact,
       },
     });
   } catch (err) {

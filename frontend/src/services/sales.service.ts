@@ -20,11 +20,17 @@ export interface SalesCycle {
   sampleCount: number;
 }
 
-export interface SalesTimeToContact {
+export interface ContactStats {
   avgHours: number; // umumiy (xom) o'rtacha soat
   avgWorkHours: number; // faqat ish vaqti bo'yicha o'rtacha soat
   totalLeadsCount: number;
   contactedLeadsCount: number;
+}
+
+// Mahalliy va Chet el raqami alohida. foreign=null → bitta ustun (deals-mode).
+export interface SalesTimeToContact {
+  local: ContactStats;
+  foreign: ContactStats | null;
 }
 
 export interface SalesByManagerPrev {

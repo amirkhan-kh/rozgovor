@@ -5,6 +5,7 @@ import { success, error } from "../utils/response";
 import { cache } from "../utils/cache";
 import { BITRIX_WEBHOOK_URL as BITRIX_WEBHOOK } from "../utils/bitrix-config";
 import { businessHoursBetween, parseHmToMinutes } from "../utils/business-hours";
+import { contactStatsFromLeads } from "../utils/time-to-contact";
 
 // "Sifatli lid" — faqat shu 5 stage'da hisoblanadi (boshqa won/lost stagelar emas).
 // Ochiq stagelar (lead hali yopilmagan):
@@ -1170,12 +1171,14 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
     // avgHours      — umumiy (xom, wall-clock) o'rtacha soat
     // avgWorkHours  — faqat ish vaqti (company adminWorkStart/End + mas'ul
     //                 menejer davomatidagi dam kunlari, Tashkent TZ) bo'yicha
-    let timeToContact: {
+    type ContactStats = {
       avgHours: number;
       avgWorkHours: number;
       totalLeadsCount: number;
       contactedLeadsCount: number;
     };
+    // Mahalliy va Chet el raqami alohida. foreign=null → faqat bitta ustun (deals-mode).
+    let timeToContact: { local: ContactStats; foreign: ContactStats | null };
     // Ish oynasi — company default (bo'sh bo'lsa 09:00–18:00).
     const workStartMin = parseHmToMinutes(companyKpi?.adminWorkStart, 9 * 60);
     const workEndMin = parseHmToMinutes(companyKpi?.adminWorkEnd, 18 * 60);
@@ -1202,61 +1205,26 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
         ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10
         : 0;
     if (kpiFromLeads) {
-      // ROZGOVOR — Lead.clientPhone ↔ AudioFile.phoneNumber bo'yicha birinchi qo'ng'iroq
-      const normPhone = (s: string | null) =>
-        (s || "").replace(/\D/g, "").replace(/^998/, "").slice(-9);
+      // ROZGOVOR — aloqaga chiqish = lid yaratilgan → BIRINCHI JAVOB BERILGAN qo'ng'iroq
+      // (Lead.firstAnsweredCallAt, Voximplant CALL_FAILED_CODE=200 orqali sync qilingan).
+      // Telefon bo'yicha emas (clientPhone ko'pincha bo'sh); javob bermagan qo'ng'iroqlar
+      // hisobga olinmaydi → menejer "halol" vaqti aniq chiqadi.
       const leadsForContact = await prisma.lead.findMany({
         where: dateRange ? { companyId, dateCreate: dateRange } : { companyId },
-        select: { clientPhone: true, dateCreate: true, responsibleManagerId: true },
+        select: {
+          dateCreate: true,
+          responsibleManagerId: true,
+          statusName: true,
+          rejectReasonName: true,
+          firstAnsweredCallAt: true,
+        },
       });
-      const leadCreatedByPhone = new Map<
-        string,
-        { date: Date; managerId: string | null }
-      >();
-      for (const l of leadsForContact) {
-        const k = normPhone(l.clientPhone);
-        if (k.length >= 7) {
-          const prev = leadCreatedByPhone.get(k);
-          if (!prev || l.dateCreate < prev.date)
-            leadCreatedByPhone.set(k, {
-              date: l.dateCreate,
-              managerId: l.responsibleManagerId,
-            });
-        }
-      }
-      const contactAudiosLm = await prisma.audioFile.findMany({
-        where: { companyId, callDate: { not: null } },
-        select: { phoneNumber: true, callDate: true },
+      // Mahalliy/Chet el ajratish + business-hours hisobi — /audit bilan umumiy helper.
+      timeToContact = contactStatsFromLeads(leadsForContact, {
+        workStartMin,
+        workEndMin,
+        daysOffByManager,
       });
-      const firstCallByPhone = new Map<string, Date>();
-      for (const a of contactAudiosLm) {
-        const k = normPhone(a.phoneNumber);
-        if (!k || !a.callDate || !leadCreatedByPhone.has(k)) continue;
-        const prev = firstCallByPhone.get(k);
-        if (!prev || a.callDate < prev) firstCallByPhone.set(k, a.callDate);
-      }
-      const gapsLm: number[] = [];
-      const workGapsLm: number[] = [];
-      for (const [k, call] of firstCallByPhone) {
-        const lead = leadCreatedByPhone.get(k)!;
-        const diff = call.getTime() - lead.date.getTime();
-        if (diff >= 0) {
-          gapsLm.push(diff / 3_600_000);
-          workGapsLm.push(
-            businessHoursBetween(lead.date, call, {
-              workStartMin,
-              workEndMin,
-              daysOff: daysOffFor(lead.managerId),
-            })
-          );
-        }
-      }
-      timeToContact = {
-        avgHours: avgRounded(gapsLm),
-        avgWorkHours: avgRounded(workGapsLm),
-        totalLeadsCount: leadCount,
-        contactedLeadsCount: gapsLm.length,
-      };
     } else {
     // SalesLead'dan olamiz — UI'dagi "Lid soni" shu jadvalga mos
     const salesLeadsForContactWhere: any = { companyId };
@@ -1337,10 +1305,13 @@ export const getSalesOverview = async (req: Request, res: Response): Promise<voi
       }
     }
     timeToContact = {
-      avgHours: avgRounded(contactGapsHrs),
-      avgWorkHours: avgRounded(contactWorkHrs),
-      totalLeadsCount: leadCount,
-      contactedLeadsCount: firstContactByLead.size,
+      local: {
+        avgHours: avgRounded(contactGapsHrs),
+        avgWorkHours: avgRounded(contactWorkHrs),
+        totalLeadsCount: leadCount,
+        contactedLeadsCount: firstContactByLead.size,
+      },
+      foreign: null,
     };
     }
 

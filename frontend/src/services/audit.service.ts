@@ -1,5 +1,6 @@
 import api from "./api";
 import { ApiResponse } from "../types";
+import type { SalesTimeToContact } from "./sales.service";
 
 export interface AuditKpis {
   totalCalls: number;
@@ -14,6 +15,8 @@ export interface AuditKpis {
   totalLeadsCount?: number;
   noConversationCount?: number;
   noLeadCount?: number;
+  // Aloqaga chiqish — Mahalliy/Chet el (javob berilgan aloqa bo'yicha), /sales bilan bir xil
+  timeToContact?: SalesTimeToContact;
 }
 
 export interface AuditOverview {
